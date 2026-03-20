@@ -4,7 +4,9 @@
 [OpenClaw](https://github.com/openclaw/openclaw) 的 Agent / Skill 场景设计的。
 
 它在补丁版 OpenClaw Docker 镜像 `ernestyu/openclaw-patched` 中体验最佳，
-也适用于普通 OpenClaw 环境，甚至任何带 Node.js 的环境。
+该镜像已经预装了大部分 Playwright 运行所需的系统依赖和浏览器。
+在**其他** OpenClaw / Node.js 环境中使用时，需要额外确保 Playwright 的
+系统依赖已满足（参见官方文档中的 `npx playwright install-deps`）。
 
 底层依赖：
 

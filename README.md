@@ -6,8 +6,11 @@
 [OpenClaw](https://github.com/openclaw/openclaw) agents and skills.
 
 It runs especially well inside the patched OpenClaw Docker image
-`ernestyu/openclaw-patched`, but also works in a standard OpenClaw setup or
-any Node.js environment.
+`ernestyu/openclaw-patched`, which ships most of the heavy Playwright
+system dependencies and browsers. It can also run in a standard OpenClaw
+setup or any Node.js environment **as long as Playwright's system
+requirements are satisfied** (see the official Playwright docs for
+`npx playwright install-deps`).
 
 Under the hood it uses **Playwright** (headless Chromium), **Mozilla
 Readability**, and **Turndown** to turn a single URL into a normalized
