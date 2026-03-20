@@ -2,9 +2,16 @@
 
 **Languages:** English | [中文说明](README_zh.md)
 
-Web page → Markdown scraper CLI built on **Playwright**, **Readability**, and **Turndown**.
+`clawfetch` is a **web page → Markdown scraper CLI** designed primarily for
+[OpenClaw](https://github.com/openclaw/openclaw) agents and skills.
 
-`clawfetch` is designed as a small, composable tool:
+It runs especially well inside the patched OpenClaw Docker image
+`ernestyu/openclaw-patched`, but also works in a standard OpenClaw setup or
+any Node.js environment.
+
+Under the hood it uses **Playwright** (headless Chromium), **Mozilla
+Readability**, and **Turndown** to turn a single URL into a normalized
+Markdown document.
 
 - Input: a single `http/https` URL
 - Output: normalized Markdown to stdout, prefixed with a simple metadata header:
@@ -21,7 +28,9 @@ Web page → Markdown scraper CLI built on **Playwright**, **Readability**, and 
   <markdown>
   ```
 
-It is primarily intended to feed local knowledge bases (e.g. clawsqlite / Clawkb) but can also be used standalone.
+The design goal is to give OpenClaw (and similar agents) a reliable, agent-
+friendly way to ingest web content into local knowledge bases (e.g.
+`clawsqlite` / Clawkb) without running a full desktop browser.
 
 ## 1. Why clawfetch?
 
@@ -39,7 +48,9 @@ Most "web scraping" approaches tend to fall into two extremes:
 - Provides a few **protocol-level fast paths** for special sites (GitHub README, Reddit RSS);
 - Focuses on the 90% of pages where you want a reliable article body, not full browser automation.
 
-It is designed for agents and tools that need a clean Markdown representation of web pages, especially as input to local SQLite-based knowledge bases.
+It is designed **for agents**: instead of just failing with an exit code,
+`clawfetch` prints clear `NEXT:` hints on errors so an OpenClaw skill can
+decide what to do next (install deps, use git, try RSS, etc.).
 
 ## 2. Installation
 
@@ -59,7 +70,8 @@ npm install -g clawfetch
 npx playwright install chromium
 ```
 
-In some environments (e.g. prebuilt OpenClaw images), Playwright browsers may already be installed.
+In some environments (e.g. the `ernestyu/openclaw-patched` Docker image),
+Playwright browsers may already be installed.
 
 ---
 
@@ -84,6 +96,13 @@ clawfetch <url> [--no-reddit-rss] [--auto-install]
 > NOTE: By default, `clawfetch` **does not** install dependencies automatically.
 > It only prints clear `npm install` suggestions. Auto-install is opt-in via `--auto-install`.
 
+In an OpenClaw setting, a typical pattern is:
+
+- Let the skill invoke `clawfetch`;
+- If the CLI reports missing dependencies, let the agent surface the `NEXT:`
+  suggestion to the operator (e.g. run `npm install -g ...`), or retry with
+  `--auto-install` when appropriate.
+
 ---
 
 ## 4. Site-specific behaviour
@@ -100,20 +119,25 @@ For normal sites (news, blogs, docs pages), `clawfetch`:
 6. Converts HTML → Markdown with Turndown;
 7. Prints a METADATA header and MARKDOWN body.
 
-If the extracted content is too short or obviously unreliable, `clawfetch` logs warnings, debug info (including optional screenshots), and suggests next steps.
+If the extracted content is too short or obviously unreliable, `clawfetch`
+logs warnings, debug info (including optional screenshots), and suggests next
+steps.
 
 ### 4.2 GitHub repositories
 
-For URLs like `https://github.com/owner/repo`, `clawfetch` treats them as **documentation entry points**:
+For URLs like `https://github.com/owner/repo`, `clawfetch` treats them as
+**documentation entry points**:
 
-- It first attempts to fetch a raw README from `raw.githubusercontent.com` (e.g. `README.md`, `README_zh.md`).
+- It first attempts to fetch a raw README from `raw.githubusercontent.com`
+  (e.g. `README.md`, `README_zh.md`).
   - On success:
     - `Extraction: github-raw-fast-path`
     - `FinalURL` is the raw README URL;
     - The MARKDOWN body is the README content.
 - If all raw candidates fail, it falls back to browser scraping.
 
-In the METADATA or surrounding text, `clawfetch` also suggests how to explore the full project:
+In the METADATA or surrounding text, `clawfetch` also suggests how to explore
+the full project:
 
 ```text
 NOTE:
@@ -124,7 +148,8 @@ NOTE:
     cd repo
 ```
 
-This keeps `clawfetch` focused on documentation, while leaving code navigation to git-based tools.
+This keeps `clawfetch` focused on documentation, while leaving code navigation
+to git-based tools.
 
 ### 4.3 Reddit
 
@@ -134,9 +159,11 @@ For `reddit.com` / `www.reddit.com` / `old.reddit.com` URLs, `clawfetch`:
   - Converts `<url>` to `<url>.rss` (e.g. `https://www.reddit.com/r/algotrading/` → `.../algotrading/.rss`);
   - Fetches the RSS XML and converts items into Markdown (titles, descriptions, links);
   - Prints `Extraction: reddit-rss`.
-- If RSS fails (network errors, non-200 status, malformed XML), it falls back to browser scraping.
+- If RSS fails (network errors, non-200 status, malformed XML), it falls back
+  to browser scraping.
 
-You can disable the RSS fast-path with `--no-reddit-rss` if you need to debug or experiment with browser-based scraping on Reddit.
+You can disable the RSS fast-path with `--no-reddit-rss` if you need to debug
+or experiment with browser-based scraping on Reddit.
 
 ---
 
@@ -176,22 +203,27 @@ If dependencies are missing **and `--auto-install` is not used**:
 
 If `--auto-install` is provided:
 
-- `clawfetch` will attempt a local `npm install` for the missing packages in the clawfetch directory.
+- `clawfetch` will attempt a local `npm install` for the missing packages in
+the clawfetch directory.
 - If the install fails, it prints the same `NEXT` hints and exits.
 - If the install succeeds, it retries loading the dependencies and continues.
 
-This makes the default behaviour safe for automated environments while still allowing a one-shot bootstrap when explicitly requested.
+This makes the default behaviour safe for automated environments while still
+allowing a one-shot bootstrap when explicitly requested.
 
 ---
 
 ## 6. Agent-friendly error hints
 
-Because `clawfetch` is designed to be used by agents (e.g. OpenClaw skills), error outputs include **"NEXT" suggestions** to guide the next action, for example:
+Because `clawfetch` is designed to be used by agents (especially OpenClaw
+skills running inside Docker images like `ernestyu/openclaw-patched`), error
+outputs include **"NEXT" suggestions** to guide the next action, for example:
 
 - On missing dependencies: suggested `npm install` commands;
 - On unreliable extraction: suggestions to try RSS, git clone, or a different tool.
 
-Agents can parse these hints to decide what to do next, rather than only seeing a raw exit code.
+Agents can parse these hints to decide what to do next, rather than only
+seeing a raw exit code.
 
 ---
 

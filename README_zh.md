@@ -1,19 +1,35 @@
 # clawfetch（中文说明）
 
-`clawfetch` 是一个 **网页 → Markdown 抓取 CLI 工具**，基于：
+`clawfetch` 是一个 **网页 → Markdown 抓取 CLI 工具**，主要是为
+[OpenClaw](https://github.com/openclaw/openclaw) 的 Agent / Skill 场景设计的。
+
+它在补丁版 OpenClaw Docker 镜像 `ernestyu/openclaw-patched` 中体验最佳，
+也适用于普通 OpenClaw 环境，甚至任何带 Node.js 的环境。
+
+底层依赖：
 
 - Playwright（无头 Chromium）
 - Mozilla Readability（正文抽取）
 - Turndown（HTML → Markdown）
 
-它的设计目标是在 **Docker / 无头环境** 下，在“抓取质量”和“资源开销”之间取得平衡：
+输入：单个 `http/https` URL
+输出：标准化的 Markdown（写到 stdout），前面带一段简单的元数据头部：
 
-- 不走简单的 `curl + 正则` 那种极易失败的方案；
-- 也不拉起完整桌面浏览器（Firefox/Chrome GUI）浪费资源；
-- 对 90% 的常规资讯/博客网页，尽量保证“可用+稳定”；
-- 对 GitHub/Reddit 这类特殊站点，提供协议级的快速路径（fast path）。
+```text
+--- METADATA ---
+Title: ...
+Author: ...
+Site: ...
+FinalURL: ...
+Extraction: readability|fallback-container|body-innerText|github-raw-fast-path|reddit-rss
+FallbackSelector: ...   # 仅在非 readability 模式下出现
+--- MARKDOWN ---
+<markdown>
+```
 
-`clawfetch` 特别适合给 **本地知识库**（例如 clawsqlite / Clawkb）喂数据，也可以单独用作网页转 Markdown 工具。
+它的设计目标是：为 OpenClaw（以及类似 Agent）提供一种可靠、
+**Agent 友好** 的方式，把网页内容转成 Markdown，特别适合喂给本地 SQLite
+知识库（例如 `clawsqlite` / Clawkb），而又不需要启动完整桌面浏览器。
 
 ---
 
@@ -35,7 +51,7 @@ npm install -g clawfetch
 npx playwright install chromium
 ```
 
-> 在某些 Docker 镜像（例如 OpenClaw patched image）中，Playwright 浏览器可能已经预装，无需重复安装。
+> 在补丁版镜像 `ernestyu/openclaw-patched` 中，Playwright 浏览器通常已预装。
 
 ---
 
@@ -57,8 +73,14 @@ clawfetch <url> [--no-reddit-rss] [--auto-install]
 - `--no-reddit-rss`   对 Reddit URL 禁用 RSS 快速路径，强制用浏览器抓取
 - `--auto-install`    当缺少 npm 依赖时，尝试在 clawfetch 安装目录执行一次本地 `npm install`
 
-> 注意：默认情况下，`clawfetch` **不会自动安装依赖**，只会打印清晰的 `npm install` 提示。
-> 只有显式加上 `--auto-install` 时，才会尝试在包目录本地安装缺失依赖。
+> 注意：默认情况下，`clawfetch` **不会自动安装依赖**，只会打印清晰的
+> `npm install` 提示。只有显式加上 `--auto-install` 时，才会尝试在包目录本地安装缺失依赖。
+
+在 OpenClaw 场景中，典型使用方式是：
+
+- Skill 调用 `clawfetch` 抓取网页；
+- 如果 CLI 提示缺少依赖，上层 Agent 可以把 `NEXT:` 段里的命令展示给运维，
+  让人类执行 `npm install -g ...`，或者在合适的时候用 `--auto-install` 再试一次。
 
 ---
 
@@ -76,7 +98,8 @@ clawfetch <url> [--no-reddit-rss] [--auto-install]
 6. 使用 Turndown 将 HTML 转成 Markdown；
 7. 输出带有 `--- METADATA ---` 头部和 `--- MARKDOWN ---` 正文的结果。
 
-当抓取结果过短或明显不可靠时，`clawfetch` 会输出告警信息以及 Debug 信息（例如截图路径、console 日志），并给出下一步建议。
+当抓取结果过短或明显不可靠时，`clawfetch` 会输出告警信息以及 Debug
+信息（例如截图路径、console 日志），并给出下一步建议。
 
 ### 2. GitHub 仓库
 
@@ -118,7 +141,7 @@ clawfetch <url> [--no-reddit-rss] [--auto-install]
 
 ## 依赖与自动安装
 
-`clawfetch` 依赖以下 npm 包（正常 `npm install` 会自动安装）：
+`clawfetch` 依赖以下 npm 包：
 
 - `playwright-core`（或 `playwright`）
 - `@mozilla/readability`
@@ -153,6 +176,10 @@ clawfetch <url> [--no-reddit-rss] [--auto-install]
 - 抓取结果不可靠时，建议改用 RSS / git clone / 其它手段；
 
 方便上层 Agent（例如 OpenClaw 的技能）根据这些提示自动选择下一步动作，而不是只得到一个简单的错误码。
+
+`clawfetch` 非常适合配合 OpenClaw 的 Docker 镜像使用，尤其是
+`ernestyu/openclaw-patched`；在普通 OpenClaw 部署中，只要安装好 Node
+和上述依赖，也可以直接使用。
 
 ---
 
