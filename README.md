@@ -86,23 +86,21 @@ clawfetch https://example.com/some-article > article.md
 Options:
 
 ```text
-clawfetch <url> [--max-comments N] [--no-reddit-rss] [--auto-install]
+clawfetch <url> [--max-comments N] [--no-reddit-rss]
 ```
 
 - `--help`            – show help and exit
 - `--max-comments N`  – limit number of Reddit comments (0 = no limit; default 50)
 - `--no-reddit-rss`   – disable Reddit RSS fast-path and use browser scraping instead
-- `--auto-install`    – when dependencies are missing, attempt a local `npm install` in the clawfetch directory
 
-> NOTE: By default, `clawfetch` **does not** install dependencies automatically.
-> It only prints clear `npm install` suggestions. Auto-install is opt-in via `--auto-install`.
+If required dependencies are missing, `clawfetch` will:
 
-In an OpenClaw setting, a typical pattern is:
+- Print the list of missing packages;
+- Print explicit `npm install` commands (global or local);
+- Exit with a non-zero code.
 
-- Let the skill invoke `clawfetch`;
-- If the CLI reports missing dependencies, let the agent surface the `NEXT:`
-  suggestion to the operator (e.g. run `npm install -g ...`), or retry with
-  `--auto-install` when appropriate.
+This keeps behaviour predictable for agents: no runtime `npm install` is ever
+triggered implicitly by the CLI.
 
 ---
 
