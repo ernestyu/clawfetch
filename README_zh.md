@@ -66,21 +66,22 @@ clawfetch https://example.com/some-article > article.md
 命令行参数：
 
 ```text
-clawfetch <url> [--max-comments N] [--no-reddit-rss]
+clawfetch <url> [--max-comments N] [--no-reddit-rss] [--auto-install]
 ```
 
 - `--help`            显示帮助后退出
 - `--max-comments N`  限制 Reddit 评论数量（0 = 不限制；默认 50）
 - `--no-reddit-rss`   对 Reddit URL 禁用 RSS 快速路径，强制用浏览器抓取
+- `--auto-install`    当缺少 npm 依赖时，尝试在 clawfetch 安装目录执行一次本地 `npm install`
 
-当缺少 npm 依赖时，`clawfetch` 的行为是：
+> 注意：默认情况下，`clawfetch` **不会自动安装依赖**，只会打印清晰的
+> `npm install` 提示。只有显式加上 `--auto-install` 时，才会尝试在包目录本地安装缺失依赖。
 
-- 打印缺失包列表；
-- 打印推荐的 `npm install` 命令（全局或本地）；
-- 返回非零状态码退出。
+在 OpenClaw 场景中，典型使用方式是：
 
-CLI 本身不会在运行时隐式执行 `npm install`，便于在 Agent 环境中审计和控制
-依赖安装行为。
+- Skill 调用 `clawfetch` 抓取网页；
+- 如果 CLI 提示缺少依赖，上层 Agent 可以把 `NEXT:` 段里的命令展示给运维，
+  让人类执行 `npm install -g ...`，或者在合适的时候用 `--auto-install` 再试一次。
 
 ---
 

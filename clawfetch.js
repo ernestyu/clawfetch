@@ -19,6 +19,8 @@
 // Dependencies are resolved at runtime with basic checks:
 // - Prefer playwright-core; fall back to playwright if needed.
 // - If required npm packages are missing, print installation hints and exit.
+// - If --auto-install is provided, clawfetch will attempt a local `npm install`
+//   for the missing packages (in the clawfetch install directory).
 
 const { spawnSync } = require("child_process");
 const { JSDOM } = require("jsdom");
@@ -28,11 +30,12 @@ const argv = process.argv.slice(2);
 function printHelp() {
   console.log("clawfetch - web page → markdown scraper\n");
   console.log("Usage:");
-  console.log("  clawfetch <url> [--max-comments N] [--no-reddit-rss]\n");
+  console.log("  clawfetch <url> [--max-comments N] [--no-reddit-rss] [--auto-install]\n");
   console.log("Options:");
   console.log("  --help            Show this help and exit");
   console.log("  --max-comments N  Limit number of Reddit comments (0 = no limit; default 50)");
-  console.log("  --no-reddit-rss   Disable Reddit RSS fast-path and use browser scraping\n");
+  console.log("  --no-reddit-rss   Disable Reddit RSS fast-path and use browser scraping");
+  console.log("  --auto-install    If dependencies are missing, attempt a local 'npm install'\n");
 }
 
 if (argv.includes("--help") || argv.length === 0) {
@@ -77,6 +80,7 @@ if (!url || !/^https?:\/\//i.test(url)) {
 }
 
 const disableRedditRss = flags.has("--no-reddit-rss");
+const autoInstallDeps = flags.has("--auto-install");
 
 function loadDeps() {
   const missing = [];
@@ -107,6 +111,29 @@ function loadDeps() {
   }
 
   if (missing.length > 0) {
+    if (autoInstallDeps) {
+      console.error("WARN: Missing required npm packages:\n  - " + missing.join("\n  - "));
+      console.error("Attempting local installation with npm (in " + __dirname + ")...\n");
+      const installArgs = ["install"].concat(missing.map((m) => m.split(" ")[0]));
+      const res = spawnSync("npm", installArgs, {
+        stdio: "inherit",
+        cwd: __dirname,
+      });
+      if (res.status !== 0) {
+        console.error(
+          "ERROR: npm install failed.\n" +
+            "NEXT:\n" +
+            "  - Install dependencies manually:\n" +
+            "      npm install -g playwright-core @mozilla/readability jsdom turndown\n" +
+            "    or:\n" +
+            "      npm install playwright-core @mozilla/readability jsdom turndown\n"
+        );
+        process.exit(1);
+      }
+
+      return loadDepsNoAuto();
+    }
+
     console.error("ERROR: Missing required npm packages:\n  - " + missing.join("\n  - "));
     console.error(
       "\nNEXT:\n" +
@@ -118,6 +145,21 @@ function loadDeps() {
     process.exit(1);
   }
 
+  return { chromium, Readability, TurndownService };
+}
+
+function loadDepsNoAuto() {
+  let chromium;
+  ({ chromium } = (() => {
+    try {
+      return require("playwright-core");
+    } catch {
+      return require("playwright");
+    }
+  })());
+
+  const { Readability } = require("@mozilla/readability");
+  const TurndownService = require("turndown");
   return { chromium, Readability, TurndownService };
 }
 
