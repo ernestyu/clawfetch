@@ -30,9 +30,10 @@ const argv = process.argv.slice(2);
 function printHelp() {
   console.log("clawfetch - web page → markdown scraper\n");
   console.log("Usage:");
-  console.log("  clawfetch <url> [--no-reddit-rss] [--auto-install]\n");
+  console.log("  clawfetch <url> [--max-comments N] [--no-reddit-rss] [--auto-install]\n");
   console.log("Options:");
   console.log("  --help            Show this help and exit");
+  console.log("  --max-comments N  Limit number of Reddit comments (0 = no limit; default 50)");
   console.log("  --no-reddit-rss   Disable Reddit RSS fast-path and use browser scraping");
   console.log("  --auto-install    If dependencies are missing, attempt a local 'npm install'\n");
 }
@@ -44,7 +45,7 @@ if (argv.includes("--help") || argv.length === 0) {
 
 let url = null;
 const flags = new Set();
-let maxComments = 50; // default for Reddit RSS (comments), 0 = no limit
+let maxComments = 50; // default for Reddit RSS comments (0 = no limit)
 
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
@@ -69,7 +70,12 @@ for (let i = 0; i < argv.length; i++) {
 
 if (!url || !/^https?:\/\//i.test(url)) {
   console.error("ERROR: Invalid arguments – please provide a valid http/https URL as the first non-flag argument.");
-  console.error("NEXT:\n  - Ensure the URL starts with http:// or https://\n  - Example:\n      clawfetch https://example.com\n");
+  console.error(
+    "NEXT:\n" +
+      "  - Ensure the URL starts with http:// or https://\n" +
+      "  - Example:\n" +
+      "      clawfetch https://example.com\n"
+  );
   process.exit(2);
 }
 
@@ -114,7 +120,14 @@ function loadDeps() {
         cwd: __dirname,
       });
       if (res.status !== 0) {
-        console.error("ERROR: npm install failed.\nNEXT:\n  - Install dependencies manually:\n      npm install -g playwright-core @mozilla/readability jsdom turndown\n    or:\n      npm install playwright-core @mozilla/readability jsdom turndown\n");
+        console.error(
+          "ERROR: npm install failed.\n" +
+            "NEXT:\n" +
+            "  - Install dependencies manually:\n" +
+            "      npm install -g playwright-core @mozilla/readability jsdom turndown\n" +
+            "    or:\n" +
+            "      npm install playwright-core @mozilla/readability jsdom turndown\n"
+        );
         process.exit(1);
       }
 
@@ -122,7 +135,13 @@ function loadDeps() {
     }
 
     console.error("ERROR: Missing required npm packages:\n  - " + missing.join("\n  - "));
-    console.error("\nNEXT:\n  - Install globally:\n      npm install -g playwright-core @mozilla/readability jsdom turndown\n    or locally:\n      npm install playwright-core @mozilla/readability jsdom turndown\n");
+    console.error(
+      "\nNEXT:\n" +
+        "  - Install globally:\n" +
+        "      npm install -g playwright-core @mozilla/readability jsdom turndown\n" +
+        "    or locally:\n" +
+        "      npm install playwright-core @mozilla/readability jsdom turndown\n"
+    );
     process.exit(1);
   }
 
@@ -332,7 +351,66 @@ function pickFallbackContainerHtml(document) {
   };
 }
 
-async function tryRedditRssFastPath(urlStr, TurndownSvc, maxComments) {
+async function tryGithubReadmeFastPath(urlStr) {
+  let parsed;
+  try {
+    parsed = new URL(urlStr);
+  } catch {
+    return false;
+  }
+
+  const host = parsed.hostname || "";
+  if (!host.includes("github.com")) return false;
+
+  if (urlStr.includes("raw.githubusercontent.com")) return false;
+
+  let rawUrl = urlStr
+    .replace("github.com", "raw.githubusercontent.com")
+    .replace("/blob/", "/")
+    .replace("/tree/", "/");
+
+  let targetUrls = [rawUrl];
+  if (!rawUrl.split("/").pop().includes(".")) {
+    const base = rawUrl.replace(/\/$/, "");
+    targetUrls = [
+      `${base}/main/README.md`,
+      `${base}/master/README.md`,
+      `${base}/main/README.zh-CN.md`,
+      `${base}/main/README_zh.md`,
+    ];
+  }
+
+  for (const u of targetUrls) {
+    try {
+      const response = await fetch(u, { signal: AbortSignal.timeout(3000) });
+      if (response.ok) {
+        const text = await response.text();
+        console.log("--- METADATA ---");
+        console.log(`Title: GitHub Raw - ${urlStr}`);
+        console.log("Author: N/A");
+        console.log("Site: GitHub");
+        console.log(`FinalURL: ${u}`);
+        console.log("Extraction: github-raw-fast-path");
+        console.log("--- MARKDOWN ---");
+        console.log(text);
+        return true;
+      }
+    } catch (e) {
+      // ignore and try next
+    }
+  }
+
+  console.error("WARN: GitHub README fast-path failed, falling back to browser mode.");
+  console.error(
+    "NEXT:\n" +
+      "  - Use git if you need full repository context:\n" +
+      `      git clone git@github.com:${parsed.pathname.replace(/^\//, "").split("/").slice(0, 2).join("/")}.git\n` +
+      "      cd <repo-name>\n"
+  );
+  return false;
+}
+
+async function tryRedditRssFastPath(urlStr, TurndownSvc, maxCommentsOpt) {
   if (disableRedditRss) return false;
 
   let parsed;
@@ -355,8 +433,12 @@ async function tryRedditRssFastPath(urlStr, TurndownSvc, maxComments) {
   try {
     const response = await fetch(rssUrl, { signal: AbortSignal.timeout(5000) });
     if (!response.ok) {
-      console.error(`WARN: Reddit RSS request failed with status ${response.status}, falling back to browser mode.`);
-      console.error("NEXT:\n  - Try again later or let an operator inspect the URL directly in a browser.\n");
+      console.error(
+        `WARN: Reddit RSS request failed with status ${response.status}, falling back to browser mode.`
+      );
+      console.error(
+        "NEXT:\n  - Try again later or let an operator inspect the URL directly in a browser.\n"
+      );
       return false;
     }
     const xml = await response.text();
@@ -378,14 +460,14 @@ async function tryRedditRssFastPath(urlStr, TurndownSvc, maxComments) {
         return t.replace(/T/, " ");
       };
 
-      const limit = maxComments == null ? 50 : maxComments;
+      const limit = maxCommentsOpt == null ? 50 : maxCommentsOpt;
       const maxIdx = limit < 0 ? Infinity : limit;
 
       items.forEach((item, idx) => {
         const title = (item.querySelector("title") || {}).textContent || "(no title)";
         const link = (item.querySelector("link") || {}).textContent || "";
         const pubDate = (item.querySelector("pubDate") || {}).textContent || "";
-        const authorNode = item.querySelector("author, creator, dc\:creator");
+        const authorNode = item.querySelector("author, creator, dc\\:creator");
         const author = authorNode && authorNode.textContent ? authorNode.textContent : "N/A";
         const descNode = item.querySelector("description");
         let descMd = "";
@@ -396,16 +478,18 @@ async function tryRedditRssFastPath(urlStr, TurndownSvc, maxComments) {
         if (idx === 0) {
           parts.push(
             "## Post: " + title + "\n" +
-            (author !== "N/A" || pubDate
-              ? `by ${author !== "N/A" ? author : "(unknown)"}${pubDate ? " at " + fmtTime(pubDate) : ""}\n\n`
-              : "") +
-            descMd +
-            (link ? `\n\n[link](${link})` : "")
+              (author !== "N/A" || pubDate
+                ? `by ${author !== "N/A" ? author : "(unknown)"}${pubDate ? " at " + fmtTime(pubDate) : ""}\n\n`
+                : "") +
+              descMd +
+              (link ? `\n\n[link](${link})` : "")
           );
         } else if (idx <= maxIdx || maxIdx === Infinity) {
           parts.push(
-            "### Comment by " + (author !== "N/A" ? author : "(unknown)") + (pubDate ? " at " + fmtTime(pubDate) : "") + "\n\n" +
-            descMd
+            "### Comment by " + (author !== "N/A" ? author : "(unknown)") +
+              (pubDate ? " at " + fmtTime(pubDate) : "") +
+              "\n\n" +
+              descMd
           );
         }
       });
@@ -426,12 +510,19 @@ async function tryRedditRssFastPath(urlStr, TurndownSvc, maxComments) {
     return true;
   } catch (e) {
     console.error(`WARN: Reddit RSS fast-path failed: ${e.message}. Falling back to browser mode.`);
-    console.error("NEXT:\n  - Try again later, or fall back to full browser scraping without RSS.\n");
+    console.error(
+      "NEXT:\n  - Try again later, or fall back to full browser scraping without RSS.\n"
+    );
     return false;
   }
 }
 
 (async () => {
+  // Fast path: GitHub README (default)
+  if (await tryGithubReadmeFastPath(url)) {
+    process.exit(0);
+  }
+
   // Fast path: Reddit RSS (default on)
   if (await tryRedditRssFastPath(url, TurndownService, maxComments)) {
     process.exit(0);
