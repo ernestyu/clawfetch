@@ -2,7 +2,7 @@
 
 **Languages:** English | [中文说明](README_zh.md)
 
-`clawfetch` is a **web page → Markdown scraper CLI** designed primarily for
+`clawfetch` is a **web page → markdown scraper CLI** designed primarily for
 [OpenClaw](https://github.com/openclaw/openclaw) agents and skills.
 
 It runs especially well inside the patched OpenClaw Docker image
@@ -11,10 +11,10 @@ any Node.js environment.
 
 Under the hood it uses **Playwright** (headless Chromium), **Mozilla
 Readability**, and **Turndown** to turn a single URL into a normalized
-Markdown document.
+markdown document.
 
 - Input: a single `http/https` URL
-- Output: normalized Markdown to stdout, prefixed with a simple metadata header:
+- Output: normalized markdown to stdout, prefixed with a simple metadata header:
 
   ```text
   --- METADATA ---
@@ -44,7 +44,7 @@ Most "web scraping" approaches tend to fall into two extremes:
 `clawfetch` aims for a balance:
 
 - Uses a **headless Chromium** via Playwright, suitable for Docker and CI;
-- Uses Readability + Turndown for robust article extraction and Markdown output;
+- Uses Readability + Turndown for robust article extraction and markdown output;
 - Provides a few **protocol-level fast paths** for special sites (GitHub README, Reddit RSS);
 - Focuses on the 90% of pages where you want a reliable article body, not full browser automation.
 
@@ -86,10 +86,11 @@ clawfetch https://example.com/some-article > article.md
 Options:
 
 ```text
-clawfetch <url> [--no-reddit-rss] [--auto-install]
+clawfetch <url> [--max-comments N] [--no-reddit-rss] [--auto-install]
 ```
 
 - `--help`            – show help and exit
+- `--max-comments N`  – limit number of Reddit comments (0 = no limit; default 50)
 - `--no-reddit-rss`   – disable Reddit RSS fast-path and use browser scraping instead
 - `--auto-install`    – when dependencies are missing, attempt a local `npm install` in the clawfetch directory
 
@@ -116,7 +117,7 @@ For normal sites (news, blogs, docs pages), `clawfetch`:
 3. Uses Mozilla Readability to extract the main article body;
 4. Falls back to a set of common containers (`article`, `main`, `.content`, etc.) if Readability fails;
 5. Finally falls back to `document.body.innerText` if needed;
-6. Converts HTML → Markdown with Turndown;
+6. Converts HTML → markdown with Turndown;
 7. Prints a METADATA header and MARKDOWN body.
 
 If the extracted content is too short or obviously unreliable, `clawfetch`
@@ -157,7 +158,11 @@ For `reddit.com` / `www.reddit.com` / `old.reddit.com` URLs, `clawfetch`:
 
 - **By default** tries the RSS fast-path:
   - Converts `<url>` to `<url>.rss` (e.g. `https://www.reddit.com/r/algotrading/` → `.../algotrading/.rss`);
-  - Fetches the RSS XML and converts items into Markdown (titles, descriptions, links);
+  - Parses the RSS XML into a **structured markdown view** of the thread:
+    - The first item is treated as the main post;
+    - Subsequent items are rendered as comments;
+    - The number of comments is limited by `--max-comments` (default 50;
+      `0` means no limit).
   - Prints `Extraction: reddit-rss`.
 - If RSS fails (network errors, non-200 status, malformed XML), it falls back
   to browser scraping.

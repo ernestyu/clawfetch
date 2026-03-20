@@ -1,6 +1,6 @@
 # clawfetch（中文说明）
 
-`clawfetch` 是一个 **网页 → Markdown 抓取 CLI 工具**，主要是为
+`clawfetch` 是一个 **网页 → markdown 抓取 CLI 工具**，主要是为
 [OpenClaw](https://github.com/openclaw/openclaw) 的 Agent / Skill 场景设计的。
 
 它在补丁版 OpenClaw Docker 镜像 `ernestyu/openclaw-patched` 中体验最佳，
@@ -10,10 +10,10 @@
 
 - Playwright（无头 Chromium）
 - Mozilla Readability（正文抽取）
-- Turndown（HTML → Markdown）
+- Turndown（HTML → markdown）
 
 输入：单个 `http/https` URL
-输出：标准化的 Markdown（写到 stdout），前面带一段简单的元数据头部：
+输出：标准化的 markdown（写到 stdout），前面带一段简单的元数据头部：
 
 ```text
 --- METADATA ---
@@ -28,7 +28,7 @@ FallbackSelector: ...   # 仅在非 readability 模式下出现
 ```
 
 它的设计目标是：为 OpenClaw（以及类似 Agent）提供一种可靠、
-**Agent 友好** 的方式，把网页内容转成 Markdown，特别适合喂给本地 SQLite
+**Agent 友好** 的方式，把网页内容转成 markdown，特别适合喂给本地 SQLite
 知识库（例如 `clawsqlite` / Clawkb），而又不需要启动完整桌面浏览器。
 
 ---
@@ -66,10 +66,11 @@ clawfetch https://example.com/some-article > article.md
 命令行参数：
 
 ```text
-clawfetch <url> [--no-reddit-rss] [--auto-install]
+clawfetch <url> [--max-comments N] [--no-reddit-rss] [--auto-install]
 ```
 
 - `--help`            显示帮助后退出
+- `--max-comments N`  限制 Reddit 评论数量（0 = 不限制；默认 50）
 - `--no-reddit-rss`   对 Reddit URL 禁用 RSS 快速路径，强制用浏览器抓取
 - `--auto-install`    当缺少 npm 依赖时，尝试在 clawfetch 安装目录执行一次本地 `npm install`
 
@@ -95,7 +96,7 @@ clawfetch <url> [--no-reddit-rss] [--auto-install]
 3. 使用 Readability 抽取主体内容；
 4. 如果 Readability 失败，则尝试一组常见容器选择器（`article` / `main` / `.content` 等）；
 5. 再不行则退回 `document.body.innerText`；
-6. 使用 Turndown 将 HTML 转成 Markdown；
+6. 使用 Turndown 将 HTML 转成 markdown；
 7. 输出带有 `--- METADATA ---` 头部和 `--- MARKDOWN ---` 正文的结果。
 
 当抓取结果过短或明显不可靠时，`clawfetch` 会输出告警信息以及 Debug
@@ -130,8 +131,13 @@ clawfetch <url> [--no-reddit-rss] [--auto-install]
 对于 `reddit.com` / `www.reddit.com` / `old.reddit.com` 等域名：
 
 - 默认行为：
-  - 优先尝试将 URL 直接转为 `.rss`（例如 `https://www.reddit.com/r/algotrading/` → `https://www.reddit.com/r/algotrading/.rss`）；
-  - 拉取 RSS XML，解析并将多个帖子合并为 Markdown 列表；
+  - 优先尝试将 URL 直接转为 `.rss`（例如
+    `https://www.reddit.com/r/algotrading/` →
+    `https://www.reddit.com/r/algotrading/.rss`）；
+  - 将 RSS XML 解析成一个**结构化的 thread 视图**：
+    - 第一个 item 作为主帖；
+    - 后续 items 作为评论；
+    - 评论数量受到 `--max-comments` 限制（默认 50，传入 0 表示不限制）；
   - 输出 `Extraction: reddit-rss`；
 - 如果 RSS 请求失败或内容异常，则退回浏览器抓取模式。
 

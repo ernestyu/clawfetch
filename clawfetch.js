@@ -23,16 +23,16 @@
 //   for the missing packages (in the clawfetch install directory).
 
 const { spawnSync } = require("child_process");
+const { JSDOM } = require("jsdom");
 
 const argv = process.argv.slice(2);
 
 function printHelp() {
   console.log("clawfetch - web page → markdown scraper\n");
   console.log("Usage:");
-  console.log("  clawfetch <url> [--github-readme] [--no-reddit-rss] [--auto-install]\n");
+  console.log("  clawfetch <url> [--no-reddit-rss] [--auto-install]\n");
   console.log("Options:");
   console.log("  --help            Show this help and exit");
-  console.log("  --github-readme   For GitHub URLs, prefer raw README fast-path");
   console.log("  --no-reddit-rss   Disable Reddit RSS fast-path and use browser scraping");
   console.log("  --auto-install    If dependencies are missing, attempt a local 'npm install'\n");
 }
@@ -44,17 +44,35 @@ if (argv.includes("--help") || argv.length === 0) {
 
 let url = null;
 const flags = new Set();
-for (const a of argv) {
-  if (a.startsWith("-")) flags.add(a);
-  else if (!url) url = a;
+let maxComments = 50; // default for Reddit RSS (comments), 0 = no limit
+
+for (let i = 0; i < argv.length; i++) {
+  const a = argv[i];
+  if (!a.startsWith("-")) {
+    if (!url) url = a;
+    continue;
+  }
+
+  if (a === "--max-comments") {
+    const v = argv[i + 1];
+    if (v && !v.startsWith("-")) {
+      const parsed = parseInt(v, 10);
+      if (!Number.isNaN(parsed)) {
+        maxComments = parsed;
+      }
+      i += 1; // skip value
+    }
+  } else {
+    flags.add(a);
+  }
 }
 
 if (!url || !/^https?:\/\//i.test(url)) {
-  console.error("ERROR: Please provide a valid http/https URL as the first non-flag argument.");
+  console.error("ERROR: Invalid arguments – please provide a valid http/https URL as the first non-flag argument.");
+  console.error("NEXT:\n  - Ensure the URL starts with http:// or https://\n  - Example:\n      clawfetch https://example.com\n");
   process.exit(2);
 }
 
-const useGithubReadme = flags.has("--github-readme");
 const disableRedditRss = flags.has("--no-reddit-rss");
 const autoInstallDeps = flags.has("--auto-install");
 
@@ -79,13 +97,6 @@ function loadDeps() {
     missing.push("@mozilla/readability");
   }
 
-  let JSDOM;
-  try {
-    ({ JSDOM } = require("jsdom"));
-  } catch {
-    missing.push("jsdom");
-  }
-
   let TurndownService;
   try {
     TurndownService = require("turndown");
@@ -103,31 +114,22 @@ function loadDeps() {
         cwd: __dirname,
       });
       if (res.status !== 0) {
-        console.error("ERROR: npm install failed. Please install the dependencies manually.\n");
-        console.error("Suggested commands:\n");
-        console.error("  npm install -g playwright-core @mozilla/readability jsdom turndown\n");
-        console.error("or:\n");
-        console.error("  npm install playwright-core @mozilla/readability jsdom turndown\n");
+        console.error("ERROR: npm install failed.\nNEXT:\n  - Install dependencies manually:\n      npm install -g playwright-core @mozilla/readability jsdom turndown\n    or:\n      npm install playwright-core @mozilla/readability jsdom turndown\n");
         process.exit(1);
       }
 
-      // Try again after auto-install
       return loadDepsNoAuto();
     }
 
     console.error("ERROR: Missing required npm packages:\n  - " + missing.join("\n  - "));
-    console.error("\nInstall them globally or in your project, for example:\n");
-    console.error("  npm install -g playwright-core @mozilla/readability jsdom turndown\n");
-    console.error("or:\n");
-    console.error("  npm install playwright-core @mozilla/readability jsdom turndown\n");
+    console.error("\nNEXT:\n  - Install globally:\n      npm install -g playwright-core @mozilla/readability jsdom turndown\n    or locally:\n      npm install playwright-core @mozilla/readability jsdom turndown\n");
     process.exit(1);
   }
 
-  return { chromium, Readability, JSDOM, TurndownService };
+  return { chromium, Readability, TurndownService };
 }
 
 function loadDepsNoAuto() {
-  // Secondary load path used after auto-install succeeds.
   let chromium;
   ({ chromium } = (() => {
     try {
@@ -138,12 +140,11 @@ function loadDepsNoAuto() {
   })());
 
   const { Readability } = require("@mozilla/readability");
-  const { JSDOM } = require("jsdom");
   const TurndownService = require("turndown");
-  return { chromium, Readability, JSDOM, TurndownService };
+  return { chromium, Readability, TurndownService };
 }
 
-const { chromium, Readability, JSDOM, TurndownService } = loadDeps();
+const { chromium, Readability, TurndownService } = loadDeps();
 
 function nowIso() {
   return new Date().toISOString().replace(/[:.]/g, "-");
@@ -331,51 +332,7 @@ function pickFallbackContainerHtml(document) {
   };
 }
 
-async function tryGithubReadmeFastPath(urlStr) {
-  if (!useGithubReadme) return false;
-  if (!urlStr.includes("github.com") || urlStr.includes("raw.githubusercontent.com")) {
-    return false;
-  }
-
-  let rawUrl = urlStr
-    .replace("github.com", "raw.githubusercontent.com")
-    .replace("/blob/", "/")
-    .replace("/tree/", "/");
-
-  let targetUrls = [rawUrl];
-  if (!rawUrl.split("/").pop().includes(".")) {
-    const base = rawUrl.replace(/\/$/, "");
-    targetUrls = [
-      `${base}/main/README.md`,
-      `${base}/master/README.md`,
-      `${base}/main/README.zh-CN.md`,
-      `${base}/main/README_zh.md`,
-    ];
-  }
-
-  for (const u of targetUrls) {
-    try {
-      const response = await fetch(u, { signal: AbortSignal.timeout(3000) });
-      if (response.ok) {
-        const text = await response.text();
-        console.log("--- METADATA ---");
-        console.log(`Title: GitHub Raw - ${urlStr}`);
-        console.log(`FinalURL: ${u}`);
-        console.log("Extraction: github-raw-fast-path");
-        console.log("--- MARKDOWN ---");
-        console.log(text);
-        return true;
-      }
-    } catch (e) {
-      // ignore and try next
-    }
-  }
-
-  console.error("WARN: GitHub README fast-path failed, falling back to browser mode.");
-  return false;
-}
-
-async function tryRedditRssFastPath(urlStr, JSDOMCls, TurndownSvc) {
+async function tryRedditRssFastPath(urlStr, TurndownSvc, maxComments) {
   if (disableRedditRss) return false;
 
   let parsed;
@@ -399,10 +356,11 @@ async function tryRedditRssFastPath(urlStr, JSDOMCls, TurndownSvc) {
     const response = await fetch(rssUrl, { signal: AbortSignal.timeout(5000) });
     if (!response.ok) {
       console.error(`WARN: Reddit RSS request failed with status ${response.status}, falling back to browser mode.`);
+      console.error("NEXT:\n  - Try again later or let an operator inspect the URL directly in a browser.\n");
       return false;
     }
     const xml = await response.text();
-    const dom = new JSDOMCls(xml, { contentType: "text/xml", url: rssUrl });
+    const dom = new JSDOM(xml, { contentType: "text/xml", url: rssUrl });
     const doc = dom.window.document;
 
     const channelTitle = (doc.querySelector("channel > title") || {}).textContent || "Reddit RSS";
@@ -414,17 +372,44 @@ async function tryRedditRssFastPath(urlStr, JSDOMCls, TurndownSvc) {
     let bodyMd = "";
     if (items.length > 0) {
       const parts = [];
-      for (const item of items) {
+
+      const fmtTime = (t) => {
+        if (!t) return "";
+        return t.replace(/T/, " ");
+      };
+
+      const limit = maxComments == null ? 50 : maxComments;
+      const maxIdx = limit < 0 ? Infinity : limit;
+
+      items.forEach((item, idx) => {
         const title = (item.querySelector("title") || {}).textContent || "(no title)";
         const link = (item.querySelector("link") || {}).textContent || "";
+        const pubDate = (item.querySelector("pubDate") || {}).textContent || "";
+        const authorNode = item.querySelector("author, creator, dc\:creator");
+        const author = authorNode && authorNode.textContent ? authorNode.textContent : "N/A";
         const descNode = item.querySelector("description");
         let descMd = "";
         if (descNode && descNode.textContent) {
-          // description often contains HTML
           descMd = turndown.turndown(descNode.textContent);
         }
-        parts.push(`### ${title}\n\n${descMd}\n\n${link ? `[link](${link})` : ""}`.trim());
-      }
+
+        if (idx === 0) {
+          parts.push(
+            "## Post: " + title + "\n" +
+            (author !== "N/A" || pubDate
+              ? `by ${author !== "N/A" ? author : "(unknown)"}${pubDate ? " at " + fmtTime(pubDate) : ""}\n\n`
+              : "") +
+            descMd +
+            (link ? `\n\n[link](${link})` : "")
+          );
+        } else if (idx <= maxIdx || maxIdx === Infinity) {
+          parts.push(
+            "### Comment by " + (author !== "N/A" ? author : "(unknown)") + (pubDate ? " at " + fmtTime(pubDate) : "") + "\n\n" +
+            descMd
+          );
+        }
+      });
+
       bodyMd = parts.join("\n\n---\n\n");
     } else {
       bodyMd = turndown.turndown(xml);
@@ -441,20 +426,14 @@ async function tryRedditRssFastPath(urlStr, JSDOMCls, TurndownSvc) {
     return true;
   } catch (e) {
     console.error(`WARN: Reddit RSS fast-path failed: ${e.message}. Falling back to browser mode.`);
+    console.error("NEXT:\n  - Try again later, or fall back to full browser scraping without RSS.\n");
     return false;
   }
 }
 
 (async () => {
-  const { document: dummyDoc } = new JSDOM("<html></html>"); // just to ensure jsdom loaded
-
-  // Fast path: GitHub README (opt-in)
-  if (await tryGithubReadmeFastPath(url)) {
-    process.exit(0);
-  }
-
   // Fast path: Reddit RSS (default on)
-  if (await tryRedditRssFastPath(url, JSDOM, TurndownService)) {
+  if (await tryRedditRssFastPath(url, TurndownService, maxComments)) {
     process.exit(0);
   }
 
@@ -604,7 +583,12 @@ async function tryRedditRssFastPath(urlStr, JSDOMCls, TurndownSvc) {
         console.error(consoleLogs.slice(-30).join("\n"));
       }
 
-      throw new Error("Scraping failed to get meaningful content.");
+      console.error("ERROR: Scraping failed to get meaningful content.");
+      console.error(
+        "NEXT:\n  - Try a different tool or a simpler HTTP-based fetch (curl/wget)." +
+          "\n  - For highly dynamic or protected pages, consider manual review in a full browser.\n"
+      );
+      process.exit(1);
     }
 
     console.log("--- METADATA ---");
@@ -631,6 +615,10 @@ async function tryRedditRssFastPath(urlStr, JSDOMCls, TurndownSvc) {
         `DEBUG: Could not get current URL or page title after error: ${e.message}`
       );
     }
+    console.error(
+      "NEXT:\n  - Check network connectivity or site availability.\n" +
+        "  - If the problem persists, open the URL in a full browser for manual inspection.\n"
+    );
     process.exit(1);
   } finally {
     await browser.close();
