@@ -441,14 +441,49 @@ async function tryRedditRssFastPath(urlStr, TurndownSvc, maxCommentsOpt) {
       );
       return false;
     }
+
+    const contentType = (response.headers.get("content-type") || "").toLowerCase();
+    if (!contentType.includes("xml") && !contentType.includes("rss")) {
+      console.error(
+        `WARN: Reddit RSS response is not XML (content-type=${contentType || "unknown"}), falling back to browser mode.`
+      );
+      console.error(
+        "NEXT:\n  - This may be a network block or HTML error page. Try again later or use browser mode.\n"
+      );
+      return false;
+    }
+
     const xml = await response.text();
+
+    // Detect common HTML/network block pages masquerading as RSS
+    if (xml.includes("You've been blocked by network security.")) {
+      console.error(
+        "WARN: Reddit RSS appears to be a network security block page, falling back to browser mode."
+      );
+      console.error(
+        "NEXT:\n  - RSS is blocked in this environment. Use browser mode or run clawfetch from a network without this block.\n"
+      );
+      return false;
+    }
+
     const dom = new JSDOM(xml, { contentType: "text/xml", url: rssUrl });
     const doc = dom.window.document;
 
-    const channelTitle = (doc.querySelector("channel > title") || {}).textContent || "Reddit RSS";
+    const channelEl = doc.querySelector("channel");
+    const items = Array.from(doc.querySelectorAll("item"));
+    if (!channelEl || items.length === 0) {
+      console.error(
+        "WARN: Reddit RSS response did not contain a valid <channel>/<item> structure, falling back to browser mode."
+      );
+      console.error(
+        "NEXT:\n  - This may be an HTML error/blocked page instead of RSS. Try again later or use browser mode.\n"
+      );
+      return false;
+    }
+
+    const channelTitle = (channelEl.querySelector("title") || {}).textContent || "Reddit RSS";
     const site = host;
 
-    const items = Array.from(doc.querySelectorAll("item"));
     const turndown = new TurndownSvc();
 
     let bodyMd = "";
@@ -472,7 +507,24 @@ async function tryRedditRssFastPath(urlStr, TurndownSvc, maxCommentsOpt) {
         const descNode = item.querySelector("description");
         let descMd = "";
         if (descNode && descNode.textContent) {
-          descMd = turndown.turndown(descNode.textContent);
+          // description is HTML; extract Reddit's markdown container(s) when present
+          const descHtml = descNode.textContent;
+          let innerHtml = descHtml;
+          try {
+            const innerDom = new JSDOM(descHtml, { contentType: "text/html" });
+            const mdDivs = innerDom.window.document.querySelectorAll("div.md");
+            if (mdDivs.length > 0) {
+              innerHtml = Array.from(mdDivs)
+                .map((d) => d.innerHTML)
+                .join("<hr/>");
+            } else if (innerDom.window.document.body) {
+              innerHtml = innerDom.window.document.body.innerHTML;
+            }
+          } catch {
+            // fall back to raw description HTML
+            innerHtml = descHtml;
+          }
+          descMd = turndown.turndown(innerHtml);
         }
 
         if (idx === 0) {
