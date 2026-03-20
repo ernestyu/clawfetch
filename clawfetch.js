@@ -1,0 +1,638 @@
+#!/usr/bin/env node
+"use strict";
+
+// clawfetch - web page → markdown scraper CLI
+//
+// Playwright + Readability + Turndown based scraper that takes a single URL
+// and emits normalized markdown with a small metadata header.
+//
+//   --- METADATA ---
+//   Title: ...
+//   Author: ...
+//   Site: ...
+//   FinalURL: ...
+//   Extraction: readability|fallback-container|body-innerText|github-raw-fast-path|reddit-rss
+//   FallbackSelector: ...   # only when not readability
+//   --- MARKDOWN ---
+//   <markdown>
+//
+// Dependencies are resolved at runtime with basic checks:
+// - Prefer playwright-core; fall back to playwright if needed.
+// - If required npm packages are missing, print installation hints and exit.
+// - If --auto-install is provided, clawfetch will attempt a local `npm install`
+//   for the missing packages (in the clawfetch install directory).
+
+const { spawnSync } = require("child_process");
+
+const argv = process.argv.slice(2);
+
+function printHelp() {
+  console.log("clawfetch - web page → markdown scraper\n");
+  console.log("Usage:");
+  console.log("  clawfetch <url> [--github-readme] [--no-reddit-rss] [--auto-install]\n");
+  console.log("Options:");
+  console.log("  --help            Show this help and exit");
+  console.log("  --github-readme   For GitHub URLs, prefer raw README fast-path");
+  console.log("  --no-reddit-rss   Disable Reddit RSS fast-path and use browser scraping");
+  console.log("  --auto-install    If dependencies are missing, attempt a local 'npm install'\n");
+}
+
+if (argv.includes("--help") || argv.length === 0) {
+  printHelp();
+  process.exit(argv.length === 0 ? 1 : 0);
+}
+
+let url = null;
+const flags = new Set();
+for (const a of argv) {
+  if (a.startsWith("-")) flags.add(a);
+  else if (!url) url = a;
+}
+
+if (!url || !/^https?:\/\//i.test(url)) {
+  console.error("ERROR: Please provide a valid http/https URL as the first non-flag argument.");
+  process.exit(2);
+}
+
+const useGithubReadme = flags.has("--github-readme");
+const disableRedditRss = flags.has("--no-reddit-rss");
+const autoInstallDeps = flags.has("--auto-install");
+
+function loadDeps() {
+  const missing = [];
+
+  let chromium;
+  try {
+    ({ chromium } = require("playwright-core"));
+  } catch (e1) {
+    try {
+      ({ chromium } = require("playwright"));
+    } catch (e2) {
+      missing.push("playwright-core (or playwright)");
+    }
+  }
+
+  let Readability;
+  try {
+    ({ Readability } = require("@mozilla/readability"));
+  } catch {
+    missing.push("@mozilla/readability");
+  }
+
+  let JSDOM;
+  try {
+    ({ JSDOM } = require("jsdom"));
+  } catch {
+    missing.push("jsdom");
+  }
+
+  let TurndownService;
+  try {
+    TurndownService = require("turndown");
+  } catch {
+    missing.push("turndown");
+  }
+
+  if (missing.length > 0) {
+    if (autoInstallDeps) {
+      console.error("WARN: Missing required npm packages:\n  - " + missing.join("\n  - "));
+      console.error("Attempting local installation with npm (in " + __dirname + ")...\n");
+      const installArgs = ["install"].concat(missing.map((m) => m.split(" ")[0]));
+      const res = spawnSync("npm", installArgs, {
+        stdio: "inherit",
+        cwd: __dirname,
+      });
+      if (res.status !== 0) {
+        console.error("ERROR: npm install failed. Please install the dependencies manually.\n");
+        console.error("Suggested commands:\n");
+        console.error("  npm install -g playwright-core @mozilla/readability jsdom turndown\n");
+        console.error("or:\n");
+        console.error("  npm install playwright-core @mozilla/readability jsdom turndown\n");
+        process.exit(1);
+      }
+
+      // Try again after auto-install
+      return loadDepsNoAuto();
+    }
+
+    console.error("ERROR: Missing required npm packages:\n  - " + missing.join("\n  - "));
+    console.error("\nInstall them globally or in your project, for example:\n");
+    console.error("  npm install -g playwright-core @mozilla/readability jsdom turndown\n");
+    console.error("or:\n");
+    console.error("  npm install playwright-core @mozilla/readability jsdom turndown\n");
+    process.exit(1);
+  }
+
+  return { chromium, Readability, JSDOM, TurndownService };
+}
+
+function loadDepsNoAuto() {
+  // Secondary load path used after auto-install succeeds.
+  let chromium;
+  ({ chromium } = (() => {
+    try {
+      return require("playwright-core");
+    } catch {
+      return require("playwright");
+    }
+  })());
+
+  const { Readability } = require("@mozilla/readability");
+  const { JSDOM } = require("jsdom");
+  const TurndownService = require("turndown");
+  return { chromium, Readability, JSDOM, TurndownService };
+}
+
+const { chromium, Readability, JSDOM, TurndownService } = loadDeps();
+
+function nowIso() {
+  return new Date().toISOString().replace(/[:.]/g, "-");
+}
+
+async function waitForStableText(
+  page,
+  { minLen = 800, stableRounds = 3, intervalMs = 700, timeoutMs = 30000 } = {}
+) {
+  const start = Date.now();
+  let lastLen = 0;
+  let stable = 0;
+
+  while (Date.now() - start < timeoutMs) {
+    const len = await page.evaluate(
+      () =>
+        document.body && document.body.innerText
+          ? document.body.innerText.length
+          : 0
+    );
+
+    if (len >= minLen && Math.abs(len - lastLen) < 30) {
+      stable += 1;
+      if (stable >= stableRounds) return len;
+    } else {
+      stable = 0;
+    }
+
+    lastLen = len;
+    await page.waitForTimeout(intervalMs);
+  }
+
+  return await page.evaluate(
+    () =>
+      document.body && document.body.innerText
+        ? document.body.innerText.length
+        : 0
+  );
+}
+
+async function smartAutoScroll(
+  page,
+  { maxSteps = 40, stepPx = 700, delayMs = 80, maxMs = 12000 } = {}
+) {
+  const start = Date.now();
+  let lastHeight = await page.evaluate(() => document.body.scrollHeight);
+  let stagnantRounds = 0;
+
+  for (let i = 0; i < maxSteps; i++) {
+    if (Date.now() - start > maxMs) break;
+
+    await page.evaluate((y) => window.scrollBy(0, y), stepPx);
+    await page.waitForTimeout(delayMs);
+
+    const h = await page.evaluate(() => document.body.scrollHeight);
+    if (h <= lastHeight + 10) {
+      stagnantRounds += 1;
+      if (stagnantRounds >= 5) break;
+    } else {
+      stagnantRounds = 0;
+    }
+    lastHeight = h;
+  }
+
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.waitForTimeout(200);
+}
+
+function buildTurndown() {
+  const td = new TurndownService({
+    headingStyle: "atx",
+    codeBlockStyle: "fenced",
+    bulletListMarker: "-",
+    emDelimiter: "*",
+    strongDelimiter: "**",
+  });
+
+  td.addRule("fencedCodeBlock", {
+    filter: function (node) {
+      return node.nodeName === "PRE";
+    },
+    replacement: function (content, node) {
+      const codeNode = node.querySelector("code");
+      const code = (codeNode ? codeNode.textContent : node.textContent) || "";
+      const cleaned = code.replace(/\n+$/, "");
+      return "\n\n```" + "\n" + cleaned + "\n```" + "\n\n";
+    },
+  });
+
+  td.addRule("images", {
+    filter: "img",
+    replacement: function (content, node) {
+      const alt = (node.getAttribute("alt") || "").trim();
+      const src = (node.getAttribute("src") || "").trim();
+      if (!src) return "";
+      return `![${alt}](${src})`;
+    },
+  });
+
+  td.addRule("links", {
+    filter: "a",
+    replacement: function (content, node) {
+      const href = (node.getAttribute("href") || "").trim();
+      const text = (content || node.textContent || "").trim() || href;
+      if (!href) return text;
+      return `[${text}](${href})`;
+    },
+  });
+
+  td.keep(["table", "thead", "tbody", "tr", "th", "td"]);
+
+  return td;
+}
+
+function sanitizeDom(document, baseUrl) {
+  const remove = (sel) =>
+    document.querySelectorAll(sel).forEach((n) => n.remove());
+
+  remove("script, style, noscript, iframe");
+  remove("header nav, footer, .footer, .nav, .navbar, .header, .ads, .advertisement");
+
+  document.querySelectorAll("img").forEach((img) => {
+    const candidates = [
+      img.getAttribute("data-src"),
+      img.getAttribute("data-original"),
+      img.getAttribute("data-url"),
+      img.getAttribute("data-actualsrc"),
+      img.getAttribute("data-lazy-src"),
+    ].filter(Boolean);
+
+    if (!img.getAttribute("src") && candidates.length > 0) {
+      img.setAttribute("src", candidates[0]);
+    }
+  });
+
+  const base = (baseUrl || (document && document.baseURI) || "").trim();
+
+  const toAbs = (raw) => {
+    const v = (raw || "").trim();
+    if (/^(javascript:|mailto:|tel:)/i.test(v)) return v;
+    if (v.startsWith("#")) return v;
+    try {
+      if (!base) return v;
+      return new URL(v, base).toString();
+    } catch (e) {
+      return v;
+    }
+  };
+
+  document.querySelectorAll("a[href]").forEach((a) => {
+    const href = a.getAttribute("href");
+    const abs = toAbs(href);
+    if (abs && abs !== href) a.setAttribute("href", abs);
+  });
+
+  document.querySelectorAll("img[src]").forEach((img) => {
+    const src = img.getAttribute("src");
+    const abs = toAbs(src);
+    if (abs && abs !== src) img.setAttribute("src", abs);
+  });
+}
+
+function pickFallbackContainerHtml(document) {
+  const selectors = [
+    "#js_content",
+    "article",
+    "main",
+    "[role=\"main\"]",
+    ".content",
+    ".post",
+    ".entry-content",
+    ".article-content",
+  ];
+
+  for (const sel of selectors) {
+    const el = document.querySelector(sel);
+    if (el && el.textContent && el.textContent.trim().length > 200) {
+      return { html: el.innerHTML, selector: sel };
+    }
+  }
+
+  return {
+    html: document.body ? document.body.innerHTML : "",
+    selector: "document.body",
+  };
+}
+
+async function tryGithubReadmeFastPath(urlStr) {
+  if (!useGithubReadme) return false;
+  if (!urlStr.includes("github.com") || urlStr.includes("raw.githubusercontent.com")) {
+    return false;
+  }
+
+  let rawUrl = urlStr
+    .replace("github.com", "raw.githubusercontent.com")
+    .replace("/blob/", "/")
+    .replace("/tree/", "/");
+
+  let targetUrls = [rawUrl];
+  if (!rawUrl.split("/").pop().includes(".")) {
+    const base = rawUrl.replace(/\/$/, "");
+    targetUrls = [
+      `${base}/main/README.md`,
+      `${base}/master/README.md`,
+      `${base}/main/README.zh-CN.md`,
+      `${base}/main/README_zh.md`,
+    ];
+  }
+
+  for (const u of targetUrls) {
+    try {
+      const response = await fetch(u, { signal: AbortSignal.timeout(3000) });
+      if (response.ok) {
+        const text = await response.text();
+        console.log("--- METADATA ---");
+        console.log(`Title: GitHub Raw - ${urlStr}`);
+        console.log(`FinalURL: ${u}`);
+        console.log("Extraction: github-raw-fast-path");
+        console.log("--- MARKDOWN ---");
+        console.log(text);
+        return true;
+      }
+    } catch (e) {
+      // ignore and try next
+    }
+  }
+
+  console.error("WARN: GitHub README fast-path failed, falling back to browser mode.");
+  return false;
+}
+
+async function tryRedditRssFastPath(urlStr, JSDOMCls, TurndownSvc) {
+  if (disableRedditRss) return false;
+
+  let parsed;
+  try {
+    parsed = new URL(urlStr);
+  } catch {
+    return false;
+  }
+
+  const host = parsed.hostname || "";
+  if (!/\.reddit\.com$/.test(host) && host !== "reddit.com") {
+    return false;
+  }
+
+  let rssUrl = parsed.toString();
+  if (!rssUrl.endsWith(".rss")) {
+    rssUrl = rssUrl.replace(/\/$/, "") + ".rss";
+  }
+
+  try {
+    const response = await fetch(rssUrl, { signal: AbortSignal.timeout(5000) });
+    if (!response.ok) {
+      console.error(`WARN: Reddit RSS request failed with status ${response.status}, falling back to browser mode.`);
+      return false;
+    }
+    const xml = await response.text();
+    const dom = new JSDOMCls(xml, { contentType: "text/xml", url: rssUrl });
+    const doc = dom.window.document;
+
+    const channelTitle = (doc.querySelector("channel > title") || {}).textContent || "Reddit RSS";
+    const site = host;
+
+    const items = Array.from(doc.querySelectorAll("item"));
+    const turndown = new TurndownSvc();
+
+    let bodyMd = "";
+    if (items.length > 0) {
+      const parts = [];
+      for (const item of items) {
+        const title = (item.querySelector("title") || {}).textContent || "(no title)";
+        const link = (item.querySelector("link") || {}).textContent || "";
+        const descNode = item.querySelector("description");
+        let descMd = "";
+        if (descNode && descNode.textContent) {
+          // description often contains HTML
+          descMd = turndown.turndown(descNode.textContent);
+        }
+        parts.push(`### ${title}\n\n${descMd}\n\n${link ? `[link](${link})` : ""}`.trim());
+      }
+      bodyMd = parts.join("\n\n---\n\n");
+    } else {
+      bodyMd = turndown.turndown(xml);
+    }
+
+    console.log("--- METADATA ---");
+    console.log(`Title: ${channelTitle}`);
+    console.log(`Author: N/A`);
+    console.log(`Site: ${site}`);
+    console.log(`FinalURL: ${rssUrl}`);
+    console.log("Extraction: reddit-rss");
+    console.log("--- MARKDOWN ---");
+    console.log(bodyMd);
+    return true;
+  } catch (e) {
+    console.error(`WARN: Reddit RSS fast-path failed: ${e.message}. Falling back to browser mode.`);
+    return false;
+  }
+}
+
+(async () => {
+  const { document: dummyDoc } = new JSDOM("<html></html>"); // just to ensure jsdom loaded
+
+  // Fast path: GitHub README (opt-in)
+  if (await tryGithubReadmeFastPath(url)) {
+    process.exit(0);
+  }
+
+  // Fast path: Reddit RSS (default on)
+  if (await tryRedditRssFastPath(url, JSDOM, TurndownService)) {
+    process.exit(0);
+  }
+
+  // Browser-based scraping
+  const browser = await chromium.launch({
+    headless: true,
+    args: [
+      "--no-sandbox",
+      "--disable-setuid-sandbox",
+      "--disable-dev-shm-usage",
+      "--disable-blink-features=AutomationControlled",
+    ],
+  });
+
+  const context = await browser.newContext({
+    userAgent:
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+      "(KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    viewport: { width: 1280, height: 800 },
+    locale: "zh-CN",
+    timezoneId: "Asia/Shanghai",
+  });
+
+  const page = await context.newPage();
+  const consoleLogs = [];
+
+  page.on("console", (msg) => {
+    try {
+      consoleLogs.push(`[${msg.type()}] ${msg.text()}`);
+      if (consoleLogs.length > 200) consoleLogs.shift();
+    } catch (e) {}
+  });
+
+  page.on("pageerror", (err) => {
+    consoleLogs.push(
+      `[pageerror] ${String(err && err.message ? err.message : err)}`
+    );
+    if (consoleLogs.length > 200) consoleLogs.shift();
+  });
+
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
+    await page.waitForTimeout(300);
+
+    await waitForStableText(page, {
+      minLen: 800,
+      stableRounds: 3,
+      intervalMs: 700,
+      timeoutMs: 30000,
+    });
+
+    await smartAutoScroll(page, {
+      maxSteps: 40,
+      stepPx: 700,
+      delayMs: 80,
+      maxMs: 12000,
+    });
+
+    await waitForStableText(page, {
+      minLen: 800,
+      stableRounds: 2,
+      intervalMs: 600,
+      timeoutMs: 15000,
+    });
+
+    const html = await page.content();
+    const title = await page.title();
+    const finalUrl = page.url();
+
+    const dom = new JSDOM(html, { url: finalUrl });
+    sanitizeDom(dom.window.document, finalUrl);
+
+    const reader = new Readability(dom.window.document, { keepClasses: false });
+    const article = reader.parse();
+
+    let extractedTitle = title || "Untitled";
+    let extractedContent = "";
+    let extractionMode = "unknown";
+    let fallbackSelector = "N/A";
+
+    const turndownService = buildTurndown();
+
+    if (
+      article &&
+      article.content &&
+      article.textContent &&
+      article.textContent.trim().length > 200
+    ) {
+      const at = (article.title || "").trim();
+      if (
+        at &&
+        !at.includes("微信公众平台") &&
+        !at.includes("Sina Visitor System")
+      ) {
+        extractedTitle = at;
+      }
+
+      extractedContent = turndownService.turndown(article.content);
+      extractionMode = "readability";
+    } else {
+      console.error(
+        "WARN: Readability failed or content too short. Falling back to best container."
+      );
+
+      const fb = pickFallbackContainerHtml(dom.window.document);
+      fallbackSelector = fb.selector;
+      extractedContent = turndownService.turndown(fb.html);
+      extractionMode = "fallback-container";
+
+      if (extractedContent.trim().length < 200) {
+        console.error(
+          "WARN: Fallback container content too short. Falling back to body innerText."
+        );
+        extractedContent = await page.evaluate(() =>
+          document.body ? document.body.innerText : ""
+        );
+        extractionMode = "body-innerText";
+      }
+    }
+
+    if (extractedContent.trim().length < 200) {
+      const info = {
+        inputUrl: url,
+        finalUrl: page.url(),
+        pageTitle: await page.title(),
+        contentLength: extractedContent.length,
+        extractionMode,
+        fallbackSelector,
+        ts: nowIso(),
+      };
+
+      console.error(
+        "WARN: Unreliable result after extraction. Debug Info:",
+        JSON.stringify(info)
+      );
+
+      try {
+        const screenshotPath = `/tmp/scrape-fail-${info.ts}.png`;
+        await page.screenshot({ path: screenshotPath, fullPage: true });
+        console.error(`DEBUG: Saved screenshot: ${screenshotPath}`);
+      } catch (e) {
+        console.error(`DEBUG: Could not save screenshot: ${e.message}`);
+      }
+
+      if (consoleLogs.length > 0) {
+        console.error("DEBUG: Recent page console logs:");
+        console.error(consoleLogs.slice(-30).join("\n"));
+      }
+
+      throw new Error("Scraping failed to get meaningful content.");
+    }
+
+    console.log("--- METADATA ---");
+    console.log(`Title: ${extractedTitle}`);
+    console.log(`Author: ${article ? article.byline || "N/A" : "N/A"}`);
+    console.log(`Site: ${article ? article.siteName || "N/A" : "N/A"}`);
+    console.log(`FinalURL: ${page.url()}`);
+    console.log(`Extraction: ${extractionMode}`);
+    if (extractionMode !== "readability") {
+      console.log(`FallbackSelector: ${fallbackSelector}`);
+    }
+    console.log("--- MARKDOWN ---");
+    console.log(extractedContent);
+  } catch (error) {
+    console.error(`ERROR: Scrape operation failed: ${error.message}`);
+    try {
+      const finalUrl = page.url();
+      const pageTitle = await page.title();
+      console.error(
+        `DEBUG: Current URL: ${finalUrl}, Page Title: ${pageTitle}`
+      );
+    } catch (e) {
+      console.error(
+        `DEBUG: Could not get current URL or page title after error: ${e.message}`
+      );
+    }
+    process.exit(1);
+  } finally {
+    await browser.close();
+  }
+})();

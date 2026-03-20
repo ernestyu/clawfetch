@@ -1,0 +1,28 @@
+{
+  "name": "clawfetch",
+  "version": "0.1.0",
+  "description": "Playwright + Readability + Turndown based web page → Markdown scraper CLI.",
+  "bin": {
+    "clawfetch": "clawfetch.js"
+  },
+  "license": "Apache-2.0",
+  "author": "Ernest Yu",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/ernestyu/clawfetch.git"
+  },
+  "keywords": [
+    "web-scraper",
+    "markdown",
+    "readability",
+    "playwright",
+    "openclaw",
+    "claw"
+  ],
+  "dependencies": {
+    "@mozilla/readability": "^0.5.0",
+    "jsdom": "^24.0.0",
+    "playwright-core": "^1.47.0",
+    "turndown": "^7.0.0"
+  }
+}
