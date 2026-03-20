@@ -431,7 +431,15 @@ async function tryRedditRssFastPath(urlStr, TurndownSvc, maxCommentsOpt) {
   }
 
   try {
-    const response = await fetch(rssUrl, { signal: AbortSignal.timeout(5000) });
+    const response = await fetch(rssUrl, {
+      signal: AbortSignal.timeout(5000),
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+          "(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+        Accept: "application/atom+xml, text/xml, */*;q=0.9",
+      },
+    });
     if (!response.ok) {
       console.error(
         `WARN: Reddit RSS request failed with status ${response.status}, falling back to browser mode.`
@@ -469,11 +477,18 @@ async function tryRedditRssFastPath(urlStr, TurndownSvc, maxCommentsOpt) {
     const dom = new JSDOM(xml, { contentType: "text/xml", url: rssUrl });
     const doc = dom.window.document;
 
+    // Support both RSS 2.0 (<channel><item>) and Atom (<feed><entry>)
+    const feedEl = doc.querySelector("feed");
     const channelEl = doc.querySelector("channel");
-    const items = Array.from(doc.querySelectorAll("item"));
-    if (!channelEl || items.length === 0) {
+    let itemNodes = Array.from(doc.querySelectorAll("item"));
+    let entryNodes = Array.from(doc.querySelectorAll("entry"));
+
+    const isAtom = !!feedEl && entryNodes.length > 0;
+    const items = isAtom ? entryNodes : itemNodes;
+
+    if ((!channelEl && !feedEl) || items.length === 0) {
       console.error(
-        "WARN: Reddit RSS response did not contain a valid <channel>/<item> structure, falling back to browser mode."
+        "WARN: Reddit RSS/Atom response did not contain a valid channel/feed structure with items/entries, falling back to browser mode."
       );
       console.error(
         "NEXT:\n  - This may be an HTML error/blocked page instead of RSS. Try again later or use browser mode.\n"
@@ -481,7 +496,9 @@ async function tryRedditRssFastPath(urlStr, TurndownSvc, maxCommentsOpt) {
       return false;
     }
 
-    const channelTitle = (channelEl.querySelector("title") || {}).textContent || "Reddit RSS";
+    const channelTitle = isAtom
+      ? (feedEl.querySelector("title") || {}).textContent || "Reddit RSS"
+      : (channelEl.querySelector("title") || {}).textContent || "Reddit RSS";
     const site = host;
 
     const turndown = new TurndownSvc();
@@ -501,10 +518,23 @@ async function tryRedditRssFastPath(urlStr, TurndownSvc, maxCommentsOpt) {
       items.forEach((item, idx) => {
         const title = (item.querySelector("title") || {}).textContent || "(no title)";
         const link = (item.querySelector("link") || {}).textContent || "";
-        const pubDate = (item.querySelector("pubDate") || {}).textContent || "";
-        const authorNode = item.querySelector("author, creator, dc\\:creator");
-        const author = authorNode && authorNode.textContent ? authorNode.textContent : "N/A";
-        const descNode = item.querySelector("description");
+        const pubDateNode = item.querySelector("updated, pubDate");
+        const pubDate = pubDateNode && pubDateNode.textContent ? pubDateNode.textContent : "";
+
+        // Author: Atom (<author><name>) vs RSS (<author>/<creator>/dc:creator)
+        let author = "N/A";
+        if (isAtom) {
+          const nameEl = item.querySelector("author > name");
+          if (nameEl && nameEl.textContent) author = nameEl.textContent;
+        } else {
+          const authorNode = item.querySelector("author, creator, dc\\:creator");
+          if (authorNode && authorNode.textContent) author = authorNode.textContent;
+        }
+
+        // Body: Atom uses <content type="html">, RSS uses <description>
+        const descNode = isAtom
+          ? item.querySelector("content")
+          : item.querySelector("description");
         let descMd = "";
         if (descNode && descNode.textContent) {
           // description is HTML; extract Reddit's markdown container(s) when present
