@@ -25,6 +25,51 @@
 const { spawnSync } = require("child_process");
 const { JSDOM } = require("jsdom");
 
+const FLARESOLVERR_URL = process.env.FLARESOLVERR_URL || '';
+
+async function fetchViaFlareSolverr(targetUrl) {
+  if (!FLARESOLVERR_URL) return null;
+  try {
+    const res = await fetch(FLARESOLVERR_URL.replace(/\/$/, '') + '/v1', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cmd: 'request.get', url: targetUrl, maxTimeout: 60000 }),
+      signal: AbortSignal.timeout(65000),
+    });
+    if (!res.ok) {
+      console.error(`WARN: FlareSolverr HTTP ${res.status}`);
+      return null;
+    }
+    const data = await res.json();
+    if (!data || !data.solution || data.solution.status !== 200 || !data.solution.response) {
+      console.error('WARN: FlareSolverr did not return a successful solution.');
+      return null;
+    }
+    return {
+      html: data.solution.response,
+      finalUrl: data.solution.url || targetUrl,
+      contentType: (data.solution.headers && (data.solution.headers['content-type'] || data.solution.headers['Content-Type'])) || '',
+    };
+  } catch (e) {
+    console.error(`WARN: FlareSolverr request failed: ${e.message}`);
+    return null;
+  }
+}
+
+function looksLikeBotBlock(text) {
+  const lower = (text || '').toLowerCase();
+  const patterns = [
+    'checking your browser before accessing',
+    'please verify you are a human',
+    'enable javascript and cookies',
+    'just a moment',
+    'attention required',
+    'access denied',
+    'cloudflare ray id',
+  ];
+  return patterns.some(p => lower.includes(p));
+}
+
 const argv = process.argv.slice(2);
 
 function printHelp() {
@@ -35,6 +80,7 @@ function printHelp() {
   console.log("  --help            Show this help and exit");
   console.log("  --max-comments N  Limit number of Reddit comments (0 = no limit; default 50)");
   console.log("  --no-reddit-rss   Disable Reddit RSS fast-path and use browser scraping");
+  console.log("  --via-flaresolverr   Fetch HTML via FLARESOLVERR_URL and skip Playwright");
   console.log("  --auto-install    If dependencies are missing, attempt a local 'npm install'\n");
 }
 
@@ -599,7 +645,60 @@ async function tryRedditRssFastPath(urlStr, TurndownSvc, maxCommentsOpt) {
   }
 }
 
+
+async function runFlareSolverrMode(url) {
+  const flare = await fetchViaFlareSolverr(url);
+  if (!flare || !flare.html || !flare.html.trim()) {
+    console.error('ERROR: FlareSolverr did not return usable HTML.');
+    console.error('NEXT: Check FLARESOLVERR_URL and reachability; then open the URL in a full browser to verify Cloudflare/JS challenges.');
+    process.exit(1);
+  }
+  const finalUrl = flare.finalUrl || url;
+  const dom = new JSDOM(flare.html, { url: finalUrl });
+  sanitizeDom(dom.window.document, finalUrl);
+  const reader = new Readability(dom.window.document, { keepClasses: false });
+  const article = reader.parse();
+  const turndownService = buildTurndown();
+  let extractedTitle = (article && article.title) || (dom.window.document.title || 'Untitled');
+  let extractedContent = '';
+  let extractionMode = 'readability-flaresolverr';
+  let fallbackSelector = 'N/A';
+  if (article && article.content && article.textContent && article.textContent.trim().length > 200) {
+    extractedContent = turndownService.turndown(article.content);
+  } else {
+    const fb = pickFallbackContainerHtml(dom.window.document);
+    fallbackSelector = fb.selector;
+    extractedContent = turndownService.turndown(fb.html);
+    extractionMode = 'fallback-container-flaresolverr';
+    if (extractedContent.trim().length < 200 && dom.window.document.body) {
+      extractedContent = dom.window.document.body.innerText || '';
+      extractionMode = 'body-innerText-flaresolverr';
+    }
+  }
+  if (extractedContent.trim().length < 200) {
+    console.error('ERROR: FlareSolverr-based extraction produced too little content.');
+    console.error('NEXT: Inspect the page manually to confirm JS-exposed content, or adjust FlareSolverr configuration / fall back to manual copy.');
+    process.exit(1);
+  }
+  console.log('--- METADATA ---');
+  console.log(`Title: ${extractedTitle}`);
+  console.log(`Author: ${article ? article.byline || 'N/A' : 'N/A'}`);
+  console.log(`Site: ${article ? article.siteName || 'N/A' : 'N/A'}`);
+  console.log(`FinalURL: ${finalUrl}`);
+  console.log(`Extraction: ${extractionMode}`);
+  if (!extractionMode.startsWith('readability')) {
+    console.log(`FallbackSelector: ${fallbackSelector}`);
+  }
+  console.log('--- MARKDOWN ---');
+  console.log(extractedContent);
+}
+
 (async () => {
+  if (flags.has("--via-flaresolverr")) {
+    await runFlareSolverrMode(url);
+    process.exit(0);
+  }
+
   // Fast path: GitHub README (default)
   if (await tryGithubReadmeFastPath(url)) {
     process.exit(0);
@@ -777,6 +876,56 @@ async function tryRedditRssFastPath(urlStr, TurndownSvc, maxCommentsOpt) {
     console.log(extractedContent);
   } catch (error) {
     console.error(`ERROR: Scrape operation failed: ${error.message}`);
+    let pageHtml = '';
+    try {
+      pageHtml = await page.content();
+    } catch (_) {}
+    if (pageHtml && looksLikeBotBlock(pageHtml)) {
+      console.error('INFO: Detected possible bot-block / Cloudflare challenge page.');
+      const flare = await fetchViaFlareSolverr(url);
+      if (flare && flare.html && flare.html.trim().length > 0) {
+        console.error('INFO: Retrying extraction using FlareSolverr HTML.');
+        try {
+          const dom = new JSDOM(flare.html, { url: flare.finalUrl || url });
+          sanitizeDom(dom.window.document, flare.finalUrl || url);
+          const reader = new Readability(dom.window.document, { keepClasses: false });
+          const article = reader.parse();
+          const turndownService = buildTurndown();
+          let extractedTitle = (article && article.title) || 'Untitled';
+          let extractedContent = '';
+          let extractionMode = 'readability-flaresolverr';
+          let fallbackSelector = 'N/A';
+          if (article && article.content && article.textContent && article.textContent.trim().length > 200) {
+            extractedContent = turndownService.turndown(article.content);
+          } else {
+            const fb = pickFallbackContainerHtml(dom.window.document);
+            fallbackSelector = fb.selector;
+            extractedContent = turndownService.turndown(fb.html);
+            extractionMode = 'fallback-container-flaresolverr';
+            if (extractedContent.trim().length < 200 && dom.window.document.body) {
+              extractedContent = dom.window.document.body.innerText || '';
+              extractionMode = 'body-innerText-flaresolverr';
+            }
+          }
+          if (extractedContent.trim().length >= 200) {
+            console.log('--- METADATA ---');
+            console.log(`Title: ${extractedTitle}`);
+            console.log(`Author: ${article ? article.byline || 'N/A' : 'N/A'}`);
+            console.log(`Site: ${article ? article.siteName || 'N/A' : 'N/A'}`);
+            console.log(`FinalURL: ${flare.finalUrl || url}`);
+            console.log(`Extraction: ${extractionMode}`);
+            if (!extractionMode.startsWith('readability')) {
+              console.log(`FallbackSelector: ${fallbackSelector}`);
+            }
+            console.log('--- MARKDOWN ---');
+            console.log(extractedContent);
+            process.exit(0);
+          }
+        } catch (e2) {
+          console.error(`WARN: FlareSolverr-based extraction failed: ${e2.message}`);
+        }
+      }
+    }
     try {
       const finalUrl = page.url();
       const pageTitle = await page.title();
