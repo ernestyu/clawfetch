@@ -743,7 +743,8 @@ async function runFlareSolverrMode(url) {
     process.exit(1);
   }
   const finalUrl = flare.finalUrl || url;
-  const dom = new JSDOM(flare.html, { url: finalUrl });
+  const anchoredHtml = extractAnchoredContentHtml(flare.html, finalUrl);
+  const dom = new JSDOM(anchoredHtml, { url: finalUrl });
   sanitizeDom(dom.window.document, finalUrl);
   const reader = new Readability(dom.window.document, { keepClasses: false });
   const article = reader.parse();
@@ -764,7 +765,7 @@ async function runFlareSolverrMode(url) {
       extractionMode = 'body-innerText-flaresolverr';
     }
   }
-  if (extractedContent.trim().length < 200) {
+  if (extractedContent.trim().length < 200 || isGarbageExtraction(extractedContent)) {
     console.error('ERROR: FlareSolverr-based extraction produced too little content.');
     console.error('NEXT: Inspect the page manually to confirm JS-exposed content, or adjust FlareSolverr configuration / fall back to manual copy.');
     process.exit(1);
@@ -864,7 +865,8 @@ async function runFlareSolverrMode(url) {
     const title = await page.title();
     const finalUrl = page.url();
 
-    const dom = new JSDOM(html, { url: finalUrl });
+    const anchoredHtml = extractAnchoredContentHtml(html, finalUrl);
+    const dom = new JSDOM(anchoredHtml, { url: finalUrl });
     sanitizeDom(dom.window.document, finalUrl);
 
     const reader = new Readability(dom.window.document, { keepClasses: false });
@@ -904,7 +906,7 @@ async function runFlareSolverrMode(url) {
       extractedContent = turndownService.turndown(fb.html);
       extractionMode = "fallback-container";
 
-      if (extractedContent.trim().length < 200) {
+      if (extractedContent.trim().length < 200 || isGarbageExtraction(extractedContent)) {
         console.error(
           "WARN: Fallback container content too short. Falling back to body innerText."
         );
@@ -915,7 +917,7 @@ async function runFlareSolverrMode(url) {
       }
     }
 
-    if (extractedContent.trim().length < 200) {
+    if (extractedContent.trim().length < 200 || isGarbageExtraction(extractedContent)) {
       const info = {
         inputUrl: url,
         finalUrl: page.url(),
