@@ -56,6 +56,27 @@ async function fetchViaFlareSolverr(targetUrl) {
   }
 }
 
+function isGarbageExtraction(text) {
+  // Heuristic garbage detector inspired by oksskolten's isGarbageExtraction.
+  if (!text) return true;
+  const raw = String(text);
+  // Strip fenced code blocks ```...``` and inline `...`
+  let prose = raw.replace(/```[\s\S]*?```/g, '');
+  prose = prose.replace(/`[^`]+`/g, '');
+  prose = prose.replace(/\s+/g, ' ').trim();
+  if (!prose) return true;
+
+  const sentences = prose.match(/[^.!?。！？]+[.!?。！？]/g) || [];
+  const proseSentences = sentences.filter((s) => {
+    const words = s.trim().split(/\s+/);
+    return words.length >= 3;
+  });
+
+  if (proseSentences.length < 3) return true;
+  if (prose.length < raw.length * 0.1) return true;
+  return false;
+}
+
 function looksLikeBotBlock(text) {
   const lower = (text || '').toLowerCase();
   const patterns = [
@@ -322,6 +343,74 @@ function buildTurndown() {
   td.keep(["table", "thead", "tbody", "tr", "th", "td"]);
 
   return td;
+}
+
+function extractAnchoredContentHtml(html, articleUrl) {
+  // For URLs with a #fragment, extract only the corresponding section
+  // (heading + following siblings until next heading of same or higher level).
+  // This mirrors oksskolten's anchored extraction strategy, but implemented
+  // independently here.
+  if (!html || !articleUrl) return html;
+  let url;
+  try {
+    url = new URL(articleUrl);
+  } catch {
+    return html;
+  }
+  const hash = (url.hash || '').replace(/^#/, '');
+  if (!hash) return html;
+
+  const dom = new JSDOM(html, { url: articleUrl });
+  const doc = dom.window.document;
+  const target = doc.getElementById(hash);
+  if (!target) return html;
+
+  const isHeading = (el) => /^H[1-6]$/i.test(el.tagName);
+  const headingLevel = (el) => {
+    if (!el) return 6;
+    if (isHeading(el)) return Number(el.tagName[1]);
+    if (el.getAttribute && el.getAttribute('role') === 'heading') {
+      const ariaLevel = Number(el.getAttribute('aria-level') || '6');
+      return Number.isFinite(ariaLevel) && ariaLevel > 0 ? ariaLevel : 6;
+    }
+    return 6;
+  };
+
+  const start = isHeading(target)
+    ? target
+    : (target.closest && target.closest('h1,h2,h3,h4,h5,h6,[role="heading"]')) || target;
+  const targetLevel = headingLevel(start);
+
+  let endBoundary = null;
+  let current = start;
+  while (current && current.nextElementSibling) {
+    current = current.nextElementSibling;
+    if (headingLevel(current) <= targetLevel) {
+      endBoundary = current;
+      break;
+    }
+  }
+
+  const range = doc.createRange();
+  range.setStartBefore(start);
+  if (endBoundary) range.setEndBefore(endBoundary);
+  else if (doc.body && doc.body.lastElementChild) range.setEndAfter(doc.body.lastElementChild);
+
+  const fragment = doc.createElement('article');
+  fragment.append(range.cloneContents());
+  const fragmentHtml = fragment.innerHTML.trim();
+  if (!fragmentHtml) return html;
+
+  const ogImage = doc.querySelector('meta[property="og:image"]');
+  const ogTitle = doc.querySelector('meta[property="og:title"]');
+  const titleEl = doc.querySelector('title');
+
+  return '<!DOCTYPE html>\n<html><head>' +
+    (titleEl ? '<title>' + titleEl.textContent + '</title>' : '') +
+    (ogImage ? ogImage.outerHTML : '') +
+    (ogTitle ? ogTitle.outerHTML : '') +
+    '</head><body><article>' + fragmentHtml + '</article></body></html>';
+
 }
 
 function sanitizeDom(document, baseUrl) {
