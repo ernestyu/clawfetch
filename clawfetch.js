@@ -973,47 +973,51 @@ async function runFlareSolverrMode(url) {
     } catch (_) {}
     if (pageHtml && looksLikeBotBlock(pageHtml)) {
       console.error('INFO: Detected possible bot-block / Cloudflare challenge page.');
-      const flare = await fetchViaFlareSolverr(url);
-      if (flare && flare.html && flare.html.trim().length > 0) {
-        console.error('INFO: Retrying extraction using FlareSolverr HTML.');
-        try {
-          const dom = new JSDOM(flare.html, { url: flare.finalUrl || url });
-          sanitizeDom(dom.window.document, flare.finalUrl || url);
-          const reader = new Readability(dom.window.document, { keepClasses: false });
-          const article = reader.parse();
-          const turndownService = buildTurndown();
-          let extractedTitle = (article && article.title) || 'Untitled';
-          let extractedContent = '';
-          let extractionMode = 'readability-flaresolverr';
-          let fallbackSelector = 'N/A';
-          if (article && article.content && article.textContent && article.textContent.trim().length > 200) {
-            extractedContent = turndownService.turndown(article.content);
-          } else {
-            const fb = pickFallbackContainerHtml(dom.window.document);
-            fallbackSelector = fb.selector;
-            extractedContent = turndownService.turndown(fb.html);
-            extractionMode = 'fallback-container-flaresolverr';
-            if (extractedContent.trim().length < 200 && dom.window.document.body) {
-              extractedContent = dom.window.document.body.innerText || '';
-              extractionMode = 'body-innerText-flaresolverr';
+      if (!FLARESOLVERR_URL) {
+        console.error('NEXT: Configure FLARESOLVERR_URL to point to a FlareSolverr service, or open the URL in a full browser to pass the challenge manually.');
+      } else {
+        const flare = await fetchViaFlareSolverr(url);
+        if (flare && flare.html && flare.html.trim().length > 0) {
+          console.error('INFO: Retrying extraction using FlareSolverr HTML.');
+          try {
+            const dom = new JSDOM(flare.html, { url: flare.finalUrl || url });
+            sanitizeDom(dom.window.document, flare.finalUrl || url);
+            const reader = new Readability(dom.window.document, { keepClasses: false });
+            const article = reader.parse();
+            const turndownService = buildTurndown();
+            let extractedTitle = (article && article.title) || 'Untitled';
+            let extractedContent = '';
+            let extractionMode = 'readability-flaresolverr';
+            let fallbackSelector = 'N/A';
+            if (article && article.content && article.textContent && article.textContent.trim().length > 200) {
+              extractedContent = turndownService.turndown(article.content);
+            } else {
+              const fb = pickFallbackContainerHtml(dom.window.document);
+              fallbackSelector = fb.selector;
+              extractedContent = turndownService.turndown(fb.html);
+              extractionMode = 'fallback-container-flaresolverr';
+              if (extractedContent.trim().length < 200 && dom.window.document.body) {
+                extractedContent = dom.window.document.body.innerText || '';
+                extractionMode = 'body-innerText-flaresolverr';
+              }
             }
-          }
-          if (extractedContent.trim().length >= 200) {
-            console.log('--- METADATA ---');
-            console.log(`Title: ${extractedTitle}`);
-            console.log(`Author: ${article ? article.byline || 'N/A' : 'N/A'}`);
-            console.log(`Site: ${article ? article.siteName || 'N/A' : 'N/A'}`);
-            console.log(`FinalURL: ${flare.finalUrl || url}`);
-            console.log(`Extraction: ${extractionMode}`);
-            if (!extractionMode.startsWith('readability')) {
-              console.log(`FallbackSelector: ${fallbackSelector}`);
+            if (extractedContent.trim().length >= 200) {
+              console.log('--- METADATA ---');
+              console.log(`Title: ${extractedTitle}`);
+              console.log(`Author: ${article ? article.byline || 'N/A' : 'N/A'}`);
+              console.log(`Site: ${article ? article.siteName || 'N/A' : 'N/A'}`);
+              console.log(`FinalURL: ${flare.finalUrl || url}`);
+              console.log(`Extraction: ${extractionMode}`);
+              if (!extractionMode.startsWith('readability')) {
+                console.log(`FallbackSelector: ${fallbackSelector}`);
+              }
+              console.log('--- MARKDOWN ---');
+              console.log(extractedContent);
+              process.exit(0);
             }
-            console.log('--- MARKDOWN ---');
-            console.log(extractedContent);
-            process.exit(0);
+          } catch (e2) {
+            console.error(`WARN: FlareSolverr-based extraction failed: ${e2.message}`);
           }
-        } catch (e2) {
-          console.error(`WARN: FlareSolverr-based extraction failed: ${e2.message}`);
         }
       }
     }
