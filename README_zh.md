@@ -13,6 +13,7 @@
 - Playwright（无头 Chromium）
 - Mozilla Readability（正文抽取）
 - Turndown（HTML → markdown）
+- 可选：FlareSolverr（Cloudflare / bot 挑战页面的 JS 抓取后端，通过 FLARESOLVERR_URL 调用）
 
 输入：单个 `http/https` URL
 输出：标准化的 markdown（写到 stdout），前面带一段简单的元数据头部：
@@ -86,6 +87,36 @@ clawfetch <url> [--max-comments N] [--no-reddit-rss] [--auto-install]
   让人类执行 `npm install -g ...`，或者在合适的时候用 `--auto-install` 再试一次。
 
 ---
+
+## Cloudflare / bot 挑战站点支持
+
+对于带有 Cloudflare 或类似 bot 挑战的站点（例如 Kaggle 部分页面），
+clawfetch 提供了额外的 JS 抓取后端支持：
+
+- 当环境变量 `FLARESOLVERR_URL` 配置为一个兼容 FlareSolverr API 的服务时，
+  clawfetch 可以在检测到 bot-block 页面时自动调用该服务获取最终 HTML；
+- 也可以显式使用 `--via-flaresolverr` 参数，强制通过该后端抓取页面：
+
+```bash
+FLARESOLVERR_URL=http://127.0.0.1:8191 \n  clawfetch --via-flaresolverr 'https://www.kaggle.com/.../some-article'
+```
+
+错误信息中的提示：
+
+- 如果 clawfetch 在浏览器模式下检测到 Cloudflare / bot 挑战页，且当前未配置
+  `FLARESOLVERR_URL`，会输出类似：
+
+  ```text
+  INFO: Detected possible bot-block / Cloudflare challenge page.
+  NEXT: Configure FLARESOLVERR_URL to point to a FlareSolverr service, or open the URL in a full browser to pass the challenge manually.
+  ```
+
+- 这条 `NEXT:` 提示说明你可以：
+  - 搭建或指向一个 FlareSolverr 服务（或其它实现了同样 API 的 JS 抓取后端）；
+  - 或者直接在本地浏览器里打开 URL，通过挑战后手动复制内容。
+
+在普通站点（无 Cloudflare / bot 挑战）上，clawfetch 仍然只使用 Playwright（或
+fast-path，如 GitHub / Reddit），不依赖 FlareSolverr。
 
 ## 站点行为说明
 
