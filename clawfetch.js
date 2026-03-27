@@ -91,6 +91,40 @@ function looksLikeBotBlock(text) {
   return patterns.some(p => lower.includes(p));
 }
 
+function isKaggleHost(hostname) {
+  const h = (hostname || '').toLowerCase();
+  return /(^|\.)kaggle\.com$/.test(h);
+}
+
+function isSuspiciousKaggleText(text) {
+  const lower = (text || '').toLowerCase();
+  const patterns = [
+    "we can't find that page",
+    "we can\u2019t find that page",
+    "you can search kaggle above or visit our homepage",
+    "kaggle uses cookies from google",
+  ];
+  return patterns.some(p => lower.includes(p));
+}
+
+async function kaggleSimpleFallbackFetch(chromium, url) {
+  // Minimal, "raw" Playwright flow (matches the working kaggle_fetch.js):
+  // - args: ['--no-sandbox'] only
+  // - no custom UA/locale/timezone overrides
+  const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
+  const page = await browser.newPage();
+  try {
+    await page.goto(url, { waitUntil: 'networkidle', timeout: 60000 });
+    await page.waitForTimeout(5000);
+    const title = await page.title();
+    const finalUrl = page.url();
+    const bodyText = await page.evaluate(() => document.body ? document.body.innerText : '');
+    return { title, finalUrl, bodyText };
+  } finally {
+    await browser.close();
+  }
+}
+
 const argv = process.argv.slice(2);
 
 function printHelp() {
@@ -820,6 +854,9 @@ async function runFlareSolverrMode(url) {
   });
 
   const page = await context.newPage();
+
+  const urlHost = (() => { try { return new URL(url).hostname; } catch { return ''; }})();
+  const isKaggle = isKaggleHost(urlHost);
   const consoleLogs = [];
 
   page.on("console", (msg) => {
@@ -838,28 +875,37 @@ async function runFlareSolverrMode(url) {
 
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
-    await page.waitForTimeout(300);
 
-    await waitForStableText(page, {
-      minLen: 800,
-      stableRounds: 3,
-      intervalMs: 700,
-      timeoutMs: 30000,
-    });
+    if (isKaggle) {
+      // Kaggle-style SPA: heavy JS, async content. Use a simpler but more robust strategy:
+      // - wait for network idle
+      // - then a fixed additional delay to ensure writeup text is rendered
+      await page.waitForLoadState('networkidle', { timeout: 60000 }).catch(() => {});
+      await page.waitForTimeout(5000);
+    } else {
+      await page.waitForTimeout(300);
 
-    await smartAutoScroll(page, {
-      maxSteps: 40,
-      stepPx: 700,
-      delayMs: 80,
-      maxMs: 12000,
-    });
+      await waitForStableText(page, {
+        minLen: 800,
+        stableRounds: 3,
+        intervalMs: 700,
+        timeoutMs: 30000,
+      });
 
-    await waitForStableText(page, {
-      minLen: 800,
-      stableRounds: 2,
-      intervalMs: 600,
-      timeoutMs: 15000,
-    });
+      await smartAutoScroll(page, {
+        maxSteps: 40,
+        stepPx: 700,
+        delayMs: 80,
+        maxMs: 12000,
+      });
+
+      await waitForStableText(page, {
+        minLen: 800,
+        stableRounds: 2,
+        intervalMs: 600,
+        timeoutMs: 15000,
+      });
+    }
 
     const html = await page.content();
     const title = await page.title();
@@ -917,41 +963,78 @@ async function runFlareSolverrMode(url) {
       }
     }
 
-    if (extractedContent.trim().length < 200 || isGarbageExtraction(extractedContent)) {
-      const info = {
-        inputUrl: url,
-        finalUrl: page.url(),
-        pageTitle: await page.title(),
-        contentLength: extractedContent.length,
-        extractionMode,
-        fallbackSelector,
-        ts: nowIso(),
-      };
-
-      console.error(
-        "WARN: Unreliable result after extraction. Debug Info:",
-        JSON.stringify(info)
+    // Kaggle-specific safety check: if we still see Kaggle 404/cookie shell,
+    // force a final innerText grab after an extra delay.
+    if (isKaggle && isSuspiciousKaggleText(extractedContent)) {
+      console.error('INFO: Kaggle content looks like 404/cookie shell, retrying with extended wait + body.innerText.');
+      await page.waitForLoadState('networkidle', { timeout: 60000 }).catch(() => {});
+      await page.waitForTimeout(5000);
+      extractedContent = await page.evaluate(() =>
+        document.body ? document.body.innerText : ''
       );
+      extractionMode = 'body-innerText-kaggle-fallback';
+      fallbackSelector = 'document.body';
+    }
 
-      try {
-        const screenshotPath = `/tmp/scrape-fail-${info.ts}.png`;
-        await page.screenshot({ path: screenshotPath, fullPage: true });
-        console.error(`DEBUG: Saved screenshot: ${screenshotPath}`);
-      } catch (e) {
-        console.error(`DEBUG: Could not save screenshot: ${e.message}`);
+    const looksWeak =
+      extractedContent.trim().length < 200 ||
+      isGarbageExtraction(extractedContent) ||
+      (isKaggle && isSuspiciousKaggleText(extractedContent));
+
+    if (looksWeak) {
+      // Kaggle 特例兜底：前面这一轮用的是 clawfetch 的浏览器指纹。
+      // 如果内容明显不对（太短 / 垃圾 / 明显 404 壳），再走一次“原始 Playwright”流程：
+      if (isKaggle) {
+        console.error('INFO: Kaggle extraction looks weak, retrying with raw Playwright fingerprint.');
+        try {
+          const simple = await kaggleSimpleFallbackFetch(chromium, url);
+          if (simple && simple.bodyText && simple.bodyText.trim().length > 500) {
+            extractedTitle = simple.title || extractedTitle;
+            extractedContent = simple.bodyText;
+            extractionMode = 'body-innerText-kaggle-raw-playwright';
+            fallbackSelector = 'document.body';
+          }
+        } catch (e) {
+          console.error(`WARN: Kaggle raw-playwright fallback failed: ${e.message}`);
+        }
       }
 
-      if (consoleLogs.length > 0) {
-        console.error("DEBUG: Recent page console logs:");
-        console.error(consoleLogs.slice(-30).join("\n"));
-      }
+      if (extractedContent.trim().length < 200 || isGarbageExtraction(extractedContent)) {
+        const info = {
+          inputUrl: url,
+          finalUrl: page.url(),
+          pageTitle: await page.title(),
+          contentLength: extractedContent.length,
+          extractionMode,
+          fallbackSelector,
+          ts: nowIso(),
+        };
 
-      console.error("ERROR: Scraping failed to get meaningful content.");
-      console.error(
-        "NEXT:\n  - Try a different tool or a simpler HTTP-based fetch (curl/wget)." +
-          "\n  - For highly dynamic or protected pages, consider manual review in a full browser.\n"
-      );
-      process.exit(1);
+        console.error(
+          "WARN: Unreliable result after extraction. Debug Info:",
+          JSON.stringify(info)
+        );
+
+        try {
+          const screenshotPath = `/tmp/scrape-fail-${info.ts}.png`;
+          await page.screenshot({ path: screenshotPath, fullPage: true });
+          console.error(`DEBUG: Saved screenshot: ${screenshotPath}`);
+        } catch (e) {
+          console.error(`DEBUG: Could not save screenshot: ${e.message}`);
+        }
+
+        if (consoleLogs.length > 0) {
+          console.error("DEBUG: Recent page console logs:");
+          console.error(consoleLogs.slice(-30).join("\n"));
+        }
+
+        console.error("ERROR: Scraping failed to get meaningful content.");
+        console.error(
+          "NEXT:\n  - Try a different tool or a simpler HTTP-based fetch (curl/wget)." +
+            "\n  - For highly dynamic or protected pages, consider manual review in a full browser.\n"
+        );
+        process.exit(1);
+      }
     }
 
     console.log("--- METADATA ---");
