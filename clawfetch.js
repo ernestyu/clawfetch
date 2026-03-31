@@ -774,7 +774,7 @@ async function runFlareSolverrMode(url) {
   if (!flare || !flare.html || !flare.html.trim()) {
     console.error('ERROR: FlareSolverr did not return usable HTML.');
     console.error('NEXT: Check FLARESOLVERR_URL and reachability; then open the URL in a full browser to verify Cloudflare/JS challenges.');
-    process.exit(1);
+    return 1;
   }
   const finalUrl = flare.finalUrl || url;
   const anchoredHtml = extractAnchoredContentHtml(flare.html, finalUrl);
@@ -802,7 +802,7 @@ async function runFlareSolverrMode(url) {
   if (extractedContent.trim().length < 200 || isGarbageExtraction(extractedContent)) {
     console.error('ERROR: FlareSolverr-based extraction produced too little content.');
     console.error('NEXT: Inspect the page manually to confirm JS-exposed content, or adjust FlareSolverr configuration / fall back to manual copy.');
-    process.exit(1);
+    return 1;
   }
   console.log('--- METADATA ---');
   console.log(`Title: ${extractedTitle}`);
@@ -815,65 +815,75 @@ async function runFlareSolverrMode(url) {
   }
   console.log('--- MARKDOWN ---');
   console.log(extractedContent);
+  return 0;
 }
 
-(async () => {
+async function main() {
   if (flags.has("--via-flaresolverr")) {
-    await runFlareSolverrMode(url);
-    process.exit(0);
+    return await runFlareSolverrMode(url);
   }
 
   // Fast path: GitHub README (default)
   if (await tryGithubReadmeFastPath(url)) {
-    process.exit(0);
+    return 0;
   }
 
   // Fast path: Reddit RSS (default on)
   if (await tryRedditRssFastPath(url, TurndownService, maxComments)) {
-    process.exit(0);
+    return 0;
   }
 
   // Browser-based scraping
-  const browser = await chromium.launch({
-    headless: true,
-    args: [
-      "--no-sandbox",
-      "--disable-setuid-sandbox",
-      "--disable-dev-shm-usage",
-      "--disable-blink-features=AutomationControlled",
-    ],
-  });
+  let browser;
+  let context;
+  let page;
 
-  const context = await browser.newContext({
-    userAgent:
-      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-      "(KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-    viewport: { width: 1280, height: 800 },
-    locale: "zh-CN",
-    timezoneId: "Asia/Shanghai",
-  });
-
-  const page = await context.newPage();
-
-  const urlHost = (() => { try { return new URL(url).hostname; } catch { return ''; }})();
+  const urlHost = (() => {
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return "";
+    }
+  })();
   const isKaggle = isKaggleHost(urlHost);
   const consoleLogs = [];
 
-  page.on("console", (msg) => {
-    try {
-      consoleLogs.push(`[${msg.type()}] ${msg.text()}`);
-      if (consoleLogs.length > 200) consoleLogs.shift();
-    } catch (e) {}
-  });
-
-  page.on("pageerror", (err) => {
-    consoleLogs.push(
-      `[pageerror] ${String(err && err.message ? err.message : err)}`
-    );
-    if (consoleLogs.length > 200) consoleLogs.shift();
-  });
-
   try {
+    browser = await chromium.launch({
+      headless: true,
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-blink-features=AutomationControlled",
+      ],
+    });
+
+    context = await browser.newContext({
+      userAgent:
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+        "(KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+      viewport: { width: 1280, height: 800 },
+      locale: "zh-CN",
+      timezoneId: "Asia/Shanghai",
+    });
+
+    page = await context.newPage();
+
+    page.on("console", (msg) => {
+      try {
+        consoleLogs.push(`[${msg.type()}] ${msg.text()}`);
+        if (consoleLogs.length > 200) consoleLogs.shift();
+      } catch (e) {}
+    });
+
+    page.on("pageerror", (err) => {
+      consoleLogs.push(
+        `[pageerror] ${String(err && err.message ? err.message : err)}`
+      );
+      if (consoleLogs.length > 200) consoleLogs.shift();
+    });
+
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 });
 
     if (isKaggle) {
@@ -1033,7 +1043,7 @@ async function runFlareSolverrMode(url) {
           "NEXT:\n  - Try a different tool or a simpler HTTP-based fetch (curl/wget)." +
             "\n  - For highly dynamic or protected pages, consider manual review in a full browser.\n"
         );
-        process.exit(1);
+        return 1;
       }
     }
 
@@ -1048,11 +1058,12 @@ async function runFlareSolverrMode(url) {
     }
     console.log("--- MARKDOWN ---");
     console.log(extractedContent);
+    return 0;
   } catch (error) {
     console.error(`ERROR: Scrape operation failed: ${error.message}`);
     let pageHtml = '';
     try {
-      pageHtml = await page.content();
+      pageHtml = page ? await page.content() : '';
     } catch (_) {}
     if (pageHtml && looksLikeBotBlock(pageHtml)) {
       console.error('INFO: Detected possible bot-block / Cloudflare challenge page.');
@@ -1096,7 +1107,7 @@ async function runFlareSolverrMode(url) {
               }
               console.log('--- MARKDOWN ---');
               console.log(extractedContent);
-              process.exit(0);
+              return 0;
             }
           } catch (e2) {
             console.error(`WARN: FlareSolverr-based extraction failed: ${e2.message}`);
@@ -1105,11 +1116,15 @@ async function runFlareSolverrMode(url) {
       }
     }
     try {
-      const finalUrl = page.url();
-      const pageTitle = await page.title();
-      console.error(
-        `DEBUG: Current URL: ${finalUrl}, Page Title: ${pageTitle}`
-      );
+      if (page) {
+        const finalUrl = page.url();
+        const pageTitle = await page.title();
+        console.error(
+          `DEBUG: Current URL: ${finalUrl}, Page Title: ${pageTitle}`
+        );
+      } else {
+        console.error("DEBUG: No page instance available after error.");
+      }
     } catch (e) {
       console.error(
         `DEBUG: Could not get current URL or page title after error: ${e.message}`
@@ -1119,8 +1134,25 @@ async function runFlareSolverrMode(url) {
       "NEXT:\n  - Check network connectivity or site availability.\n" +
         "  - If the problem persists, open the URL in a full browser for manual inspection.\n"
     );
-    process.exit(1);
+    return 1;
   } finally {
-    await browser.close();
+    try {
+      await page?.close();
+    } catch {}
+    try {
+      await context?.close();
+    } catch {}
+    try {
+      await browser?.close();
+    } catch {}
   }
-})();
+}
+
+main()
+  .then((code) => {
+    process.exitCode = code;
+  })
+  .catch((error) => {
+    console.error(`ERROR: Unhandled failure: ${error && error.message ? error.message : String(error)}`);
+    process.exitCode = 1;
+  });
