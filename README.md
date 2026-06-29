@@ -67,14 +67,21 @@ Node.js 18+ is recommended (for built-in `fetch` and modern JS features).
 npm install -g clawfetch
 ```
 
-### 2.3 Install Chromium for Playwright (if needed)
+### 2.3 Initialize the controlled clawfetch runtime
 
 ```bash
-npx playwright install chromium
+clawfetch runtime install
+clawfetch runtime check
 ```
 
-In some environments (e.g. the `ernestyu/openclaw-patched` Docker image),
-Playwright browsers may already be installed.
+`clawfetch` keeps its Playwright browser binaries in a component-owned runtime
+directory instead of relying on whatever Playwright cache happens to exist on
+the host. By default this is:
+
+- Windows: `%LOCALAPPDATA%\clawfetch\ms-playwright`
+- Linux/macOS: `$XDG_CACHE_HOME/clawfetch/ms-playwright` or `~/.cache/clawfetch/ms-playwright`
+
+Set `CLAWFETCH_RUNTIME_DIR` if you need to place this runtime somewhere else.
 
 ---
 
@@ -90,6 +97,7 @@ Options:
 
 ```text
 clawfetch <url> [--max-comments N] [--no-reddit-rss] [--auto-install]
+clawfetch runtime <status|install|check|repair|upgrade|clean|diagnose>
 ```
 
 - `--help`            – show help and exit
@@ -99,6 +107,23 @@ clawfetch <url> [--max-comments N] [--no-reddit-rss] [--auto-install]
 
 > NOTE: By default, `clawfetch` **does not** install dependencies automatically.
 > It only prints clear `npm install` suggestions. Auto-install is opt-in via `--auto-install`.
+
+Runtime lifecycle commands:
+
+- `clawfetch runtime status` shows the clawfetch version, Playwright package,
+  controlled browser path, manifest, and whether the expected Chromium binary exists.
+- `clawfetch runtime install` installs the Chromium runtime for the current
+  bundled Playwright package.
+- `clawfetch runtime check` verifies that the controlled runtime can actually
+  launch Chromium.
+- `clawfetch runtime repair` reinstalls the current runtime when files are
+  missing or damaged.
+- `clawfetch runtime upgrade` installs the browser runtime expected by the
+  currently installed clawfetch/Playwright version after a package upgrade.
+- `clawfetch runtime clean` prints a dry-run list of old runtime entries;
+  add `--yes` to delete them, or `--all --yes` to reset the entire runtime.
+- `clawfetch runtime diagnose --json` emits structured diagnostics for agents,
+  CI, health checks, and support reports.
 
 In an OpenClaw setting, a typical pattern is:
 

@@ -48,13 +48,20 @@ FallbackSelector: ...   # 仅在非 readability 模式下出现
 npm install -g clawfetch
 ```
 
-### 3. 安装 Chromium 浏览器（如果所在环境尚未安装）
+### 3. 初始化 clawfetch 受控运行时
 
 ```bash
-npx playwright install chromium
+clawfetch runtime install
+clawfetch runtime check
 ```
 
-> 在补丁版镜像 `ernestyu/openclaw-patched` 中，Playwright 浏览器通常已预装。
+`clawfetch` 会把自己的 Playwright 浏览器二进制放在组件专属 runtime 目录中，
+不再依赖宿主环境里碰巧存在的 Playwright 浏览器缓存。默认位置：
+
+- Windows：`%LOCALAPPDATA%\clawfetch\ms-playwright`
+- Linux/macOS：`$XDG_CACHE_HOME/clawfetch/ms-playwright` 或 `~/.cache/clawfetch/ms-playwright`
+
+如果需要放到其它位置，可以设置 `CLAWFETCH_RUNTIME_DIR`。
 
 ---
 
@@ -70,6 +77,7 @@ clawfetch https://example.com/some-article > article.md
 
 ```text
 clawfetch <url> [--max-comments N] [--no-reddit-rss] [--auto-install]
+clawfetch runtime <status|install|check|repair|upgrade|clean|diagnose>
 ```
 
 - `--help`            显示帮助后退出
@@ -79,6 +87,19 @@ clawfetch <url> [--max-comments N] [--no-reddit-rss] [--auto-install]
 
 > 注意：默认情况下，`clawfetch` **不会自动安装依赖**，只会打印清晰的
 > `npm install` 提示。只有显式加上 `--auto-install` 时，才会尝试在包目录本地安装缺失依赖。
+
+运行时生命周期命令：
+
+- `clawfetch runtime status`：查看 clawfetch 版本、Playwright 包版本、
+  受控浏览器路径、manifest，以及预期 Chromium 二进制是否存在。
+- `clawfetch runtime install`：为当前 Playwright 包安装对应 Chromium runtime。
+- `clawfetch runtime check`：实际启动一次 Chromium，验证 runtime 是否健康。
+- `clawfetch runtime repair`：当文件缺失或损坏时，重新安装当前 runtime。
+- `clawfetch runtime upgrade`：在升级 clawfetch/Playwright 包后，安装当前版本期望的浏览器 runtime。
+- `clawfetch runtime clean`：默认输出旧 runtime 条目的 dry-run 清单；
+  加 `--yes` 才会删除，加 `--all --yes` 可以完全重置 runtime。
+- `clawfetch runtime diagnose --json`：输出结构化诊断信息，方便 Agent、CI、
+  健康检查和远程排障读取。
 
 在 OpenClaw 场景中，典型使用方式是：
 
