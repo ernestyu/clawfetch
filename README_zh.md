@@ -56,15 +56,17 @@ clawfetch runtime check
 ```
 
 `clawfetch` 会把自己的 Playwright 浏览器二进制放在组件专属 runtime 目录中，
-不再依赖宿主环境里碰巧存在的 Playwright 浏览器缓存。同时，`clawfetch`
-只支持一种 Playwright JS runtime 形态：安装在 clawfetch 包自身 `node_modules`
-边界内、且版本满足 clawfetch 声明范围的 `playwright-core`。浏览器 runtime
-默认位置：
+这个目录位于当前实际安装的 clawfetch 包根目录内，不再依赖宿主环境里碰巧存在的
+Playwright 浏览器缓存。同时，`clawfetch` 只支持一种 Playwright JS runtime
+形态：安装在 clawfetch 包自身 `node_modules` 边界内、且版本满足 clawfetch
+声明范围的 `playwright-core`。浏览器 runtime 默认位置：
 
-- Windows：`%LOCALAPPDATA%\clawfetch\ms-playwright`
-- Linux/macOS：`$XDG_CACHE_HOME/clawfetch/ms-playwright` 或 `~/.cache/clawfetch/ms-playwright`
+```text
+<clawfetch package root>/.clawfetch-runtime/ms-playwright
+```
 
-如果需要放到其它位置，可以设置 `CLAWFETCH_RUNTIME_DIR`。
+这里的包根目录指 npm 安装后的 clawfetch 实际安装体所在目录，不是调用方当前工作目录。
+`CLAWFETCH_RUNTIME_DIR` 会被忽略，避免不同调用之间出现 browser runtime 路径漂移。
 
 ---
 
@@ -94,15 +96,15 @@ clawfetch runtime <status|install|check|repair|upgrade|clean|diagnose>
 运行时生命周期命令：
 
 - `clawfetch runtime status`：查看 clawfetch 版本、受支持的 Playwright 包模型、
-  实际解析到的 Playwright 包来源/版本、受控浏览器路径、manifest 匹配状态，
-  以及预期 Chromium 二进制是否存在。
+  实际解析到的 Playwright 包来源/版本、包根目录内的受控浏览器路径、
+  manifest 匹配状态，以及预期 Chromium 二进制是否存在。
 - `clawfetch runtime install`：为当前受支持的 `playwright-core` 包安装对应 Chromium runtime。
 - `clawfetch runtime check`：在 JS 包类型、包来源、包版本、manifest、浏览器二进制
   都符合受支持 runtime 边界后，实际启动一次 Chromium 验证健康状态。
 - `clawfetch runtime repair`：当文件缺失或损坏时，重新安装当前 runtime。
 - `clawfetch runtime upgrade`：在升级 clawfetch/Playwright 包后，安装当前版本期望的浏览器 runtime。
 - `clawfetch runtime clean`：默认输出旧 runtime 条目的 dry-run 清单；
-  加 `--yes` 才会删除，加 `--all --yes` 可以完全重置 runtime。
+  加 `--yes` 才会删除，加 `--all --yes` 可以完全重置包根目录内的 runtime。
 - `clawfetch runtime diagnose --json`：输出结构化诊断信息，方便 Agent、CI、
   健康检查和远程排障读取。
 
@@ -110,7 +112,8 @@ clawfetch runtime <status|install|check|repair|upgrade|clean|diagnose>
 
 - Skill 调用 `clawfetch` 抓取网页；
 - 如果 CLI 提示缺少依赖，上层 Agent 可以把 `NEXT:` 段里的命令展示给运维，
-  让人类执行 `npm install -g ...`，或者在合适的时候用 `--auto-install` 再试一次。
+  让人类在 clawfetch 包根目录内执行 `npm install` 并随后运行
+  `clawfetch runtime install`，或者在合适的时候用 `--auto-install` 再试一次。
 
 ---
 
@@ -226,12 +229,13 @@ fast-path，如 GitHub / Reddit），不依赖 FlareSolverr。
   - 打印缺失列表以及推荐的安装命令；
   - 退出并返回非零状态码；
 - 如果加了 `--auto-install`：
-  - 会在 `clawfetch.js` 所在目录执行一次：
+  - 会在 clawfetch 包根目录执行一次：
 
     ```bash
-    npm install <缺失的包>
+    npm install
     ```
 
+  - 安装内容由组件自己的 `package.json` 决定；
   - 如果安装失败，同样给出明确的 `npm install` 建议让操作者处理。
 
 `playwright` 不再被视为 `playwright-core` 的等价替代品。如果受支持包缺失、

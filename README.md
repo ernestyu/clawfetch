@@ -75,16 +75,20 @@ clawfetch runtime check
 ```
 
 `clawfetch` keeps its Playwright browser binaries in a component-owned runtime
-directory instead of relying on whatever Playwright cache happens to exist on
-the host. It also supports exactly one Playwright JS runtime shape:
+directory under the actual clawfetch package root instead of relying on
+whatever Playwright cache happens to exist on the host. It also supports
+exactly one Playwright JS runtime shape:
 `playwright-core`, installed under the clawfetch package's own `node_modules`
 directory and within the version range declared by clawfetch. By default the
 browser runtime is:
 
-- Windows: `%LOCALAPPDATA%\clawfetch\ms-playwright`
-- Linux/macOS: `$XDG_CACHE_HOME/clawfetch/ms-playwright` or `~/.cache/clawfetch/ms-playwright`
+```text
+<clawfetch package root>/.clawfetch-runtime/ms-playwright
+```
 
-Set `CLAWFETCH_RUNTIME_DIR` if you need to place this runtime somewhere else.
+The package root is the actual npm-installed clawfetch package directory, not
+the caller's current working directory. `CLAWFETCH_RUNTIME_DIR` is ignored so
+the browser runtime path cannot drift between calls.
 
 ---
 
@@ -115,7 +119,8 @@ Runtime lifecycle commands:
 
 - `clawfetch runtime status` shows the clawfetch version, supported Playwright
   package model, actual Playwright package source/version, controlled browser
-  path, manifest match, and whether the expected Chromium binary exists.
+  path under the package root, manifest match, and whether the expected
+  Chromium binary exists.
 - `clawfetch runtime install` installs the Chromium runtime for the current
   supported `playwright-core` package.
 - `clawfetch runtime check` verifies that the controlled runtime can actually
@@ -126,7 +131,8 @@ Runtime lifecycle commands:
 - `clawfetch runtime upgrade` installs the browser runtime expected by the
   currently installed clawfetch/Playwright version after a package upgrade.
 - `clawfetch runtime clean` prints a dry-run list of old runtime entries;
-  add `--yes` to delete them, or `--all --yes` to reset the entire runtime.
+  add `--yes` to delete them, or `--all --yes` to reset the package-root
+  runtime directory.
 - `clawfetch runtime diagnose --json` emits structured diagnostics for agents,
   CI, health checks, and support reports.
 
@@ -134,8 +140,9 @@ In an OpenClaw setting, a typical pattern is:
 
 - Let the skill invoke `clawfetch`;
 - If the CLI reports missing dependencies, let the agent surface the `NEXT:`
-  suggestion to the operator (e.g. run `npm install -g ...`), or retry with
-  `--auto-install` when appropriate.
+  suggestion to the operator (for example, repair the clawfetch package
+  directory with `npm install` and then run `clawfetch runtime install`), or
+  retry with `--auto-install` when appropriate.
 
 ---
 
@@ -256,8 +263,8 @@ If dependencies are missing **and `--auto-install` is not used**:
 
 If `--auto-install` is provided:
 
-- `clawfetch` will attempt a local `npm install` for the missing packages in
-the clawfetch directory.
+- `clawfetch` will attempt a local `npm install` in the clawfetch package root,
+  using the component's own `package.json`.
 - If the install fails, it prints the same `NEXT` hints and exits.
 - If the install succeeds, it retries loading the dependencies and continues.
 

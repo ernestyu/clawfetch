@@ -23,7 +23,6 @@
 //   for the missing packages (in the clawfetch install directory).
 
 const fs = require("fs");
-const os = require("os");
 const path = require("path");
 const { spawnSync } = require("child_process");
 
@@ -37,27 +36,20 @@ const PACKAGE_JSON = (() => {
   }
 })();
 
-const DEFAULT_RUNTIME_ROOT = process.env.CLAWFETCH_RUNTIME_DIR
-  ? path.resolve(process.env.CLAWFETCH_RUNTIME_DIR)
-  : path.join(
-      process.platform === "win32"
-        ? (process.env.LOCALAPPDATA || path.join(os.homedir(), "AppData", "Local"))
-        : (process.env.XDG_CACHE_HOME || path.join(os.homedir(), ".cache")),
-      "clawfetch"
-    );
-
-const RUNTIME_ROOT = DEFAULT_RUNTIME_ROOT;
+const COMPONENT_ROOT = __dirname;
+const RUNTIME_ROOT = path.join(COMPONENT_ROOT, ".clawfetch-runtime");
 const BROWSERS_PATH = path.join(RUNTIME_ROOT, "ms-playwright");
 const RUNTIME_MANIFEST_PATH = path.join(RUNTIME_ROOT, "runtime.json");
 const PREVIOUS_PLAYWRIGHT_BROWSERS_PATH = process.env.PLAYWRIGHT_BROWSERS_PATH || "";
+const IGNORED_CLAWFETCH_RUNTIME_DIR = process.env.CLAWFETCH_RUNTIME_DIR || "";
 const SUPPORTED_PLAYWRIGHT_PACKAGE = "playwright-core";
 const UNSUPPORTED_PLAYWRIGHT_PACKAGE = "playwright";
 const SUPPORTED_PLAYWRIGHT_VERSION_RANGE =
   (PACKAGE_JSON.dependencies && PACKAGE_JSON.dependencies[SUPPORTED_PLAYWRIGHT_PACKAGE]) || "*";
-const COMPONENT_NODE_MODULES_DIR = path.join(__dirname, "node_modules");
+const COMPONENT_NODE_MODULES_DIR = path.join(COMPONENT_ROOT, "node_modules");
 
 // Keep clawfetch's Playwright browser binaries inside a component-owned runtime
-// directory instead of relying on the host's ambient Playwright cache.
+// directory under the package root instead of relying on ambient host caches.
 process.env.PLAYWRIGHT_BROWSERS_PATH = BROWSERS_PATH;
 
 const FLARESOLVERR_URL = process.env.FLARESOLVERR_URL || '';
@@ -129,7 +121,7 @@ function versionSatisfiesRange(version, range) {
 }
 
 function resolvePackageInfo(packageName) {
-  const pkgPath = require.resolve(`${packageName}/package.json`, { paths: [__dirname] });
+  const pkgPath = require.resolve(`${packageName}/package.json`, { paths: [COMPONENT_ROOT] });
   const pkg = require(pkgPath);
   return {
     packageName,
@@ -152,6 +144,26 @@ function createRuntimeError(code, message, details = {}) {
   err.code = code;
   err.details = details;
   return err;
+}
+
+function assertRuntimeRootWritable(action) {
+  try {
+    fs.mkdirSync(RUNTIME_ROOT, { recursive: true });
+    const probePath = path.join(RUNTIME_ROOT, `.write-test-${process.pid}-${Date.now()}`);
+    fs.writeFileSync(probePath, action || "runtime", "utf8");
+    fs.rmSync(probePath, { force: true });
+  } catch (e) {
+    throw createRuntimeError(
+      "CLAWFETCH_RUNTIME_ROOT_UNWRITABLE",
+      `Component runtime directory is not writable: ${RUNTIME_ROOT}`,
+      {
+        componentRoot: COMPONENT_ROOT,
+        runtimeRoot: RUNTIME_ROOT,
+        action,
+        cause: e && e.message ? e.message : String(e),
+      }
+    );
+  }
 }
 
 function loadPlaywrightRuntime() {
@@ -248,6 +260,7 @@ function runtimeManifestMatches(status) {
 }
 
 function finalizeRuntimeChecks(status) {
+  status.checks.runtimeRootInComponent = isInsidePath(status.component.installDir, status.runtime.root) ? "ok" : "failed";
   status.checks.playwrightPackageType =
     status.playwright && status.playwright.packageName === SUPPORTED_PLAYWRIGHT_PACKAGE ? "ok" : "failed";
   status.checks.playwrightVersion =
@@ -268,11 +281,15 @@ function finalizeRuntimeChecks(status) {
     status.checks.playwrightPackageType === "ok" &&
     status.checks.playwrightVersion === "ok" &&
     status.checks.playwrightSource === "ok" &&
+    status.checks.runtimeRootInComponent === "ok" &&
     status.checks.browserManaged === "ok" &&
     status.checks.browserExecutable === "ok" &&
     status.checks.manifestMatches === "ok";
 
   status.errors = [];
+  if (status.checks.runtimeRootInComponent !== "ok") {
+    status.errors.push(`Expected runtime root under component install directory ${status.component.installDir}.`);
+  }
   if (status.checks.playwrightPackageType !== "ok") {
     status.errors.push(`Expected Playwright JS package ${SUPPORTED_PLAYWRIGHT_PACKAGE}.`);
   }
@@ -298,9 +315,11 @@ async function collectRuntimeStatus({ verifyLaunch = false } = {}) {
     component: {
       name: PACKAGE_JSON.name || "clawfetch",
       version: PACKAGE_JSON.version || "unknown",
-      installDir: __dirname,
+      installDir: COMPONENT_ROOT,
     },
     supportedRuntime: {
+      componentRoot: COMPONENT_ROOT,
+      runtimeRoot: RUNTIME_ROOT,
       playwrightPackage: SUPPORTED_PLAYWRIGHT_PACKAGE,
       playwrightVersionRange: SUPPORTED_PLAYWRIGHT_VERSION_RANGE,
       packageSourceRoot: COMPONENT_NODE_MODULES_DIR,
@@ -312,6 +331,7 @@ async function collectRuntimeStatus({ verifyLaunch = false } = {}) {
       manifestPath: RUNTIME_MANIFEST_PATH,
       manifest: readJsonFile(RUNTIME_MANIFEST_PATH),
       previousPlaywrightBrowsersPath: PREVIOUS_PLAYWRIGHT_BROWSERS_PATH || null,
+      ignoredClawfetchRuntimeDir: IGNORED_CLAWFETCH_RUNTIME_DIR || null,
     },
     playwright: null,
     browser: {
@@ -325,6 +345,7 @@ async function collectRuntimeStatus({ verifyLaunch = false } = {}) {
       playwrightPackageType: "failed",
       playwrightVersion: "failed",
       playwrightSource: "failed",
+      runtimeRootInComponent: "failed",
       browserManaged: "failed",
       browserExecutable: "failed",
       manifestMatches: "failed",
@@ -401,6 +422,9 @@ function printRuntimeStatusText(status) {
   if (status.runtime.previousPlaywrightBrowsersPath) {
     console.log(`Host PLAYWRIGHT_BROWSERS_PATH ignored: ${status.runtime.previousPlaywrightBrowsersPath}`);
   }
+  if (status.runtime.ignoredClawfetchRuntimeDir) {
+    console.log(`Host CLAWFETCH_RUNTIME_DIR ignored: ${status.runtime.ignoredClawfetchRuntimeDir}`);
+  }
   console.log(
     `SupportedPlaywright: ${status.supportedRuntime.playwrightPackage}@${status.supportedRuntime.playwrightVersionRange}`
   );
@@ -417,6 +441,7 @@ function printRuntimeStatusText(status) {
   console.log(`PlaywrightPackageType: ${status.checks.playwrightPackageType}`);
   console.log(`PlaywrightVersion: ${status.checks.playwrightVersion}`);
   console.log(`PlaywrightSource: ${status.checks.playwrightSource}`);
+  console.log(`RuntimeRootInComponent: ${status.checks.runtimeRootInComponent}`);
   console.log(`BrowserManaged: ${status.checks.browserManaged}`);
   console.log(`ManifestMatches: ${status.checks.manifestMatches}`);
   console.log(`RuntimeComplete: ${status.checks.runtimeComplete ? "yes" : "no"}`);
@@ -528,10 +553,11 @@ function writeRuntimeManifest(playwrightInfo, action) {
 function runPlaywrightInstall(action) {
   const pw = loadPlaywrightRuntime();
   const cliPath = resolvePlaywrightCli(pw.packageName, pw.packageRoot);
+  assertRuntimeRootWritable(action);
   fs.mkdirSync(BROWSERS_PATH, { recursive: true });
 
   const result = spawnSync(process.execPath, [cliPath, "install", "chromium"], {
-    cwd: __dirname,
+    cwd: COMPONENT_ROOT,
     stdio: "inherit",
     env: {
       ...process.env,
@@ -601,6 +627,14 @@ async function handleRuntimeCommand(args) {
             "  - Then retry the runtime lifecycle command:\n" +
             `      clawfetch runtime ${command}\n`
         );
+      } else if (e && e.code === "CLAWFETCH_RUNTIME_ROOT_UNWRITABLE") {
+        console.error(
+          "NEXT:\n" +
+            "  - Fix the clawfetch package install so its component runtime directory is writable:\n" +
+            `      ${RUNTIME_ROOT}\n` +
+            "  - Or reinstall clawfetch into a writable component location, then retry:\n" +
+            `      clawfetch runtime ${command}\n`
+        );
       } else {
         console.error(
           "NEXT:\n" +
@@ -668,8 +702,10 @@ function printRuntimeHelp() {
   console.log("  clawfetch runtime repair [--check] [--json]");
   console.log("  clawfetch runtime upgrade [--check] [--json]");
   console.log("  clawfetch runtime clean [--yes] [--all] [--json]\n");
-  console.log("Environment:");
-  console.log("  CLAWFETCH_RUNTIME_DIR  Override the component-owned runtime root");
+  console.log("Runtime:");
+  console.log("  Browser runtime is fixed under the clawfetch package root:");
+  console.log(`  ${RUNTIME_ROOT}`);
+  console.log("  CLAWFETCH_RUNTIME_DIR is ignored to keep the component runtime deterministic.");
 }
 
 async function fetchViaFlareSolverr(targetUrl) {
@@ -896,11 +932,10 @@ function loadDeps() {
   if (missing.length > 0) {
     if (autoInstallDeps) {
       console.error("WARN: Missing required npm packages:\n  - " + missing.join("\n  - "));
-      console.error("Attempting local installation with npm (in " + __dirname + ")...\n");
-      const installArgs = ["install"].concat(missing.map((m) => m.split(" ")[0]));
-      const res = spawnSync("npm", installArgs, {
+      console.error("Attempting local installation with npm (in " + COMPONENT_ROOT + ")...\n");
+      const res = spawnSync("npm", ["install"], {
         stdio: "inherit",
-        cwd: __dirname,
+        cwd: COMPONENT_ROOT,
       });
       if (res.status !== 0) {
         console.error(
