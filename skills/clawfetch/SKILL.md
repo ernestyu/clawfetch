@@ -63,7 +63,7 @@ node node_modules/clawfetch/clawfetch.js https://example.com
 
 The smoke test should print `--- METADATA ---` and `--- MARKDOWN ---`.
 
-The bootstrap script installs the published `clawfetch` npm package into this skill directory, under `node_modules/clawfetch`. It does not install the browser runtime, clone a repository, install unrelated packages, modify global npm state, or change system paths.
+The bootstrap script installs the published `clawfetch` npm package into this skill directory, under `node_modules/clawfetch`, and verifies that `node_modules/clawfetch/clawfetch.js` exists before reporting success. It does not install the browser runtime, clone a repository, install unrelated packages, modify global npm state, or change system paths.
 
 When this skill lives inside the clawfetch project repository, bootstrap reads the project root `package.json` and installs that same version. If the wrapper is distributed without the project root, it uses the pinned fallback version in `bootstrap_deps.sh`; maintainers must keep that fallback aligned with the current published CLI version.
 

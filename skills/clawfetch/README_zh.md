@@ -41,7 +41,7 @@ node node_modules/clawfetch/clawfetch.js https://example.com
 
 成功时应输出 `--- METADATA ---` 和 `--- MARKDOWN ---`。
 
-bootstrap 脚本会把已发布的 `clawfetch` npm 包安装到当前 skill 目录，形成 `node_modules/clawfetch`。它不安装 browser runtime，不执行 `git clone`，不下载源码树，不修改全局 npm 状态，不改系统 PATH，也不安装无关工具。
+bootstrap 脚本会把已发布的 `clawfetch` npm 包安装到当前 skill 目录，形成 `node_modules/clawfetch`，并在报告成功前验证 `node_modules/clawfetch/clawfetch.js` 确实存在。它不安装 browser runtime，不执行 `git clone`，不下载源码树，不修改全局 npm 状态，不改系统 PATH，也不安装无关工具。
 
 默认情况下，脚本跟随项目根目录 `package.json` 中的版本。如果这个 wrapper 被单独分发、读不到项目根目录，则回退到脚本中固定记录的版本。这个 fallback 只是为了独立 ClawHub 分发场景存在，维护时必须和当前对外发布的 CLI 版本保持一致。
 

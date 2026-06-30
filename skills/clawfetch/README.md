@@ -41,7 +41,7 @@ node node_modules/clawfetch/clawfetch.js https://example.com
 
 A successful smoke test prints `--- METADATA ---` and `--- MARKDOWN ---`.
 
-The bootstrap script installs the published `clawfetch` npm package into this skill directory as `node_modules/clawfetch`. It does not install the browser runtime, run `git clone`, download a source tree, modify global npm state, change system paths, or install unrelated tools.
+The bootstrap script installs the published `clawfetch` npm package into this skill directory as `node_modules/clawfetch` and verifies that `node_modules/clawfetch/clawfetch.js` exists before reporting success. It does not install the browser runtime, run `git clone`, download a source tree, modify global npm state, change system paths, or install unrelated tools.
 
 By default the script follows the version in the project root `package.json`. If the wrapper is distributed without the project root, it falls back to the pinned version recorded in the script. That fallback exists only because standalone ClawHub distribution cannot dynamically read the project root; keep it aligned with the current published CLI version.
 

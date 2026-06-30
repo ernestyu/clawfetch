@@ -16,6 +16,20 @@ fi
 cd "$SCRIPT_DIR"
 npm install --no-save "clawfetch@$CLAWFETCH_VERSION"
 
+CLAWFETCH_CLI="$SCRIPT_DIR/node_modules/clawfetch/clawfetch.js"
+if [ ! -f "$CLAWFETCH_CLI" ]; then
+  cat >&2 <<EOF
+ERROR: clawfetch npm package installed, but the expected CLI entry was not found:
+  $CLAWFETCH_CLI
+
+NEXT:
+  - Verify the published clawfetch package contains clawfetch.js.
+  - Re-run bootstrap after the package is repaired or the wrapper path is updated.
+
+EOF
+  exit 1
+fi
+
 cat <<EOF
 
 clawfetch npm CLI installed in:
