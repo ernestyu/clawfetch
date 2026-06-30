@@ -1,15 +1,31 @@
 {
   "name": "clawfetch",
-  "version": "0.1.7",
-  "description": "Playwright + Readability + Turndown based web page → Markdown scraper CLI.",
+  "version": "1.0.9",
+  "description": "Playwright + Readability + Turndown based web page to Markdown scraper CLI.",
   "bin": {
     "clawfetch": "clawfetch.js"
+  },
+  "files": [
+    "clawfetch.js",
+    "README.md",
+    "README_zh.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
   },
   "license": "Apache-2.0",
   "author": "Ernest Yu",
   "repository": {
     "type": "git",
-    "url": "git+ssh://git@github.com/ernestyu/clawfetch.git"
+    "url": "git+https://github.com/ernestyu/clawfetch.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ernestyu/clawfetch/issues"
+  },
+  "homepage": "https://github.com/ernestyu/clawfetch#readme",
+  "publishConfig": {
+    "access": "public"
   },
   "keywords": [
     "web-scraper",

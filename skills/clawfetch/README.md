@@ -20,7 +20,7 @@ cd skills/clawfetch
 
 The bootstrap script installs the published `clawfetch` npm package into this skill directory as `node_modules/clawfetch`. It does not run `git clone`, download a source tree, modify global npm state, change system paths, or install unrelated tools.
 
-By default the script follows the version in the project root `package.json`. If the wrapper is distributed without the project root, it falls back to the pinned version recorded in the script.
+By default the script follows the version in the project root `package.json`. If the wrapper is distributed without the project root, it falls back to the pinned version recorded in the script. That fallback exists only because standalone ClawHub distribution cannot dynamically read the project root; keep it aligned with the current published CLI version.
 
 ## Usage
 
@@ -44,8 +44,12 @@ node node_modules/clawfetch/clawfetch.js runtime diagnose --json
 
 The skill layer must not manage browser runtime directly. It should surface the CLI's `NEXT:` hints to the Agent or operator.
 
+The browser runtime install location and lifecycle are decided by the CLI/project itself. This wrapper does not participate in path selection, runtime repair logic, or version matching.
+
 ## Boundaries
 
 This skill does not implement scraping logic, browser launch logic, Playwright package resolution, browser runtime management, GitHub fast-paths, Reddit RSS handling, FlareSolverr support, or markdown conversion.
 
 This skill also does not hide downloads, clone repositories, perform unrelated filesystem operations, or act as a general shell tool.
+
+ClawHub publishes skill content under its registry license policy. The `clawfetch` npm CLI package remains licensed separately under Apache-2.0.
