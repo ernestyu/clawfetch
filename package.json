@@ -7,7 +7,7 @@
   },
   "files": [
     "clawfetch.js",
-    "clawfetch.toml",
+    "clawfetch.toml.example",
     "README.md",
     "README_zh.md",
     "LICENSE"

@@ -152,8 +152,16 @@ In an OpenClaw setting, a typical pattern is:
 ## 4. Configuration
 
 `clawfetch` supports a project-local configuration file named `clawfetch.toml`.
-It is mainly used for FlareSolverr configuration so Agents can discover the
-scraping strategy from project files instead of relying on shell/session state.
+Use `clawfetch.toml.example` as the template, then copy it into your project
+root as `clawfetch.toml`. This configuration is mainly used for FlareSolverr so
+Agents can discover the scraping strategy from project files instead of relying
+on shell/session state.
+
+Bootstrap example:
+
+```bash
+cp clawfetch.toml.example clawfetch.toml
+```
 
 Example:
 
@@ -177,10 +185,11 @@ Precedence:
 1. CLI arguments: `--flaresolverr-url`, `--flaresolverr-timeout-ms`
 2. `clawfetch.toml`
 3. `FLARESOLVERR_URL` as a compatibility fallback
-4. Default disabled FlareSolverr behavior
+4. Default enabled FlareSolverr behavior when `clawfetch.toml` enables it
 
 `FLARESOLVERR_URL` is still supported for older workflows and temporary
-overrides, but new projects should prefer `clawfetch.toml`.
+overrides, but new projects should prefer `clawfetch.toml` created from
+`clawfetch.toml.example`.
 
 ---
 

@@ -122,9 +122,16 @@ clawfetch runtime <status|install|check|repair|upgrade|clean|diagnose>
 
 ## 配置文件
 
-`clawfetch` 支持项目内显式配置文件 `clawfetch.toml`。它主要用于配置
-FlareSolverr，让人和 Agent 能直接从项目文件中理解抓取策略，而不是依赖
-外部 shell/session 状态。
+`clawfetch` 支持项目内显式配置文件 `clawfetch.toml`。请把
+`clawfetch.toml.example` 作为模板复制到项目根目录并命名为
+`clawfetch.toml`。它主要用于配置 FlareSolverr，让人和 Agent 能直接从
+项目文件中理解抓取策略，而不是依赖外部 shell/session 状态。
+
+初始化示例：
+
+```bash
+cp clawfetch.toml.example clawfetch.toml
+```
 
 示例：
 
@@ -146,9 +153,10 @@ max_timeout_ms = 60000
 1. CLI 参数：`--flaresolverr-url`、`--flaresolverr-timeout-ms`
 2. `clawfetch.toml`
 3. `FLARESOLVERR_URL` 兼容旧流程和临时覆盖
-4. 默认不启用 FlareSolverr
+4. 当 `clawfetch.toml` 开启时默认启用 FlareSolverr
 
-`FLARESOLVERR_URL` 仍然兼容，但新项目应优先使用 `clawfetch.toml`。
+`FLARESOLVERR_URL` 仍然兼容，但新项目应优先使用由
+`clawfetch.toml.example` 复制得到的 `clawfetch.toml`。
 
 ---
 
