@@ -31,20 +31,47 @@ The runtime behavior belongs to the published clawfetch CLI installed by `bootst
 
 ## Bootstrap
 
-Installing this skill only installs the wrapper files in this directory. The actual npm CLI must be installed explicitly:
+Installing this skill through OpenClaw/ClawHub only installs the wrapper files in this directory. Do not treat `openclaw skills install clawfetch` as a complete clawfetch installation.
+
+First-time setup is not complete until both the npm CLI and the browser runtime are installed and checked:
+
+1. Find the installed skill directory, the directory containing this `SKILL.md` and `bootstrap_deps.sh`.
+2. Install the published clawfetch npm CLI into this skill directory:
 
 ```bash
-cd skills/clawfetch
+cd <installed skill directory>
 ./bootstrap_deps.sh
 ```
 
-The bootstrap script installs the published `clawfetch` npm package into this skill directory, under `node_modules/clawfetch`. It does not clone a repository, install unrelated packages, modify global npm state, or change system paths.
+3. Install the CLI-managed browser runtime:
+
+```bash
+node node_modules/clawfetch/clawfetch.js runtime install
+```
+
+4. Verify the runtime before fetching pages:
+
+```bash
+node node_modules/clawfetch/clawfetch.js runtime check
+```
+
+5. Optional smoke test for network and extraction:
+
+```bash
+node node_modules/clawfetch/clawfetch.js https://example.com
+```
+
+The smoke test should print `--- METADATA ---` and `--- MARKDOWN ---`.
+
+The bootstrap script installs the published `clawfetch` npm package into this skill directory, under `node_modules/clawfetch`. It does not install the browser runtime, clone a repository, install unrelated packages, modify global npm state, or change system paths.
 
 When this skill lives inside the clawfetch project repository, bootstrap reads the project root `package.json` and installs that same version. If the wrapper is distributed without the project root, it uses the pinned fallback version in `bootstrap_deps.sh`; maintainers must keep that fallback aligned with the current published CLI version.
 
+Ready state means `node_modules/clawfetch` exists and `node node_modules/clawfetch/clawfetch.js runtime check` exits successfully. If runtime check fails, run `node node_modules/clawfetch/clawfetch.js runtime diagnose --json` and follow the CLI's `NEXT:` hints.
+
 ## Invocation
 
-After bootstrap, invoke the CLI through the local package installation:
+After bootstrap and a successful runtime check, invoke the CLI through the local package installation:
 
 ```bash
 node node_modules/clawfetch/clawfetch.js https://example.com/article
@@ -58,7 +85,7 @@ node node_modules/clawfetch/clawfetch.js runtime check
 node node_modules/clawfetch/clawfetch.js runtime diagnose --json
 ```
 
-Do not bypass these CLI lifecycle commands from the skill layer. Browser runtime install, check, repair, upgrade, clean, and diagnose behavior must remain owned by the clawfetch CLI.
+Do not bypass these CLI lifecycle commands from the skill layer. Browser runtime install, check, repair, upgrade, clean, and diagnose behavior must remain owned by the clawfetch CLI. `bootstrap_deps.sh` installs the npm CLI; `runtime install` installs the browser runtime. Both are required for first use.
 
 ## Agent Guidance
 

@@ -6,25 +6,48 @@ This directory is a thin OpenClaw/ClawHub skill wrapper for the published `clawf
 
 The skill lets Agents call clawfetch as a controlled tool for turning web pages, GitHub README pages, and Reddit threads into knowledge-base friendly markdown. The CLI remains the only implementation of scraping, runtime lifecycle, site-specific behavior, and error recovery.
 
-## Install Model
+## First-Use Install Model
 
-Installation is explicit and two-step:
+Installing this skill wrapper is not the same as installing a ready-to-run clawfetch environment. A first-time Agent must complete all stages below.
 
 1. Install or copy this skill wrapper directory.
-2. Run bootstrap from this directory:
+2. Enter the installed skill directory, the directory containing `SKILL.md` and `bootstrap_deps.sh`.
+3. Bootstrap the published npm CLI into this skill directory:
 
 ```bash
-cd skills/clawfetch
+cd <installed skill directory>
 ./bootstrap_deps.sh
 ```
 
-The bootstrap script installs the published `clawfetch` npm package into this skill directory as `node_modules/clawfetch`. It does not run `git clone`, download a source tree, modify global npm state, change system paths, or install unrelated tools.
+4. Install the browser runtime through the CLI:
+
+```bash
+node node_modules/clawfetch/clawfetch.js runtime install
+```
+
+5. Check the runtime before fetching:
+
+```bash
+node node_modules/clawfetch/clawfetch.js runtime check
+```
+
+Only after step 5 succeeds should an Agent treat clawfetch as ready for browser-backed fetching.
+
+Optional smoke test:
+
+```bash
+node node_modules/clawfetch/clawfetch.js https://example.com
+```
+
+A successful smoke test prints `--- METADATA ---` and `--- MARKDOWN ---`.
+
+The bootstrap script installs the published `clawfetch` npm package into this skill directory as `node_modules/clawfetch`. It does not install the browser runtime, run `git clone`, download a source tree, modify global npm state, change system paths, or install unrelated tools.
 
 By default the script follows the version in the project root `package.json`. If the wrapper is distributed without the project root, it falls back to the pinned version recorded in the script. That fallback exists only because standalone ClawHub distribution cannot dynamically read the project root; keep it aligned with the current published CLI version.
 
 ## Usage
 
-After bootstrap, call the local CLI:
+After bootstrap and a successful runtime check, call the local CLI:
 
 ```bash
 node node_modules/clawfetch/clawfetch.js https://example.com/article
@@ -45,6 +68,14 @@ node node_modules/clawfetch/clawfetch.js runtime diagnose --json
 The skill layer must not manage browser runtime directly. It should surface the CLI's `NEXT:` hints to the Agent or operator.
 
 The browser runtime install location and lifecycle are decided by the CLI/project itself. This wrapper does not participate in path selection, runtime repair logic, or version matching.
+
+If setup fails, run:
+
+```bash
+node node_modules/clawfetch/clawfetch.js runtime diagnose --json
+```
+
+Then follow the CLI's `NEXT:` output instead of inventing a skill-layer workaround.
 
 ## Boundaries
 

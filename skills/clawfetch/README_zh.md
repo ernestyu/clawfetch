@@ -6,25 +6,48 @@
 
 这个 skill 让 Agent 能把 clawfetch 当成受控工具调用，用于把一般网页、GitHub README 页面和 Reddit 线程转换成适合知识库处理的 markdown。真正的抓取实现、runtime 生命周期、站点策略和错误恢复都仍然只由 clawfetch CLI 负责。
 
-## 安装模型
+## 首次可用安装模型
 
-安装是显式两步：
+安装这个 skill wrapper 不等于已经得到可直接运行的 clawfetch 环境。第一次使用时，Agent 必须完成下面所有阶段。
 
 1. 安装或复制这个 skill wrapper 目录。
-2. 在本目录运行 bootstrap：
+2. 进入已安装的 skill 目录，也就是包含 `SKILL.md` 和 `bootstrap_deps.sh` 的目录。
+3. 把已发布的 npm CLI bootstrap 到当前 skill 目录：
 
 ```bash
-cd skills/clawfetch
+cd <installed skill directory>
 ./bootstrap_deps.sh
 ```
 
-bootstrap 脚本会把已发布的 `clawfetch` npm 包安装到当前 skill 目录，形成 `node_modules/clawfetch`。它不会执行 `git clone`，不会下载源码树，不会修改全局 npm 状态，不会改系统 PATH，也不会安装无关工具。
+4. 通过 CLI 安装 browser runtime：
+
+```bash
+node node_modules/clawfetch/clawfetch.js runtime install
+```
+
+5. 抓取前检查 runtime：
+
+```bash
+node node_modules/clawfetch/clawfetch.js runtime check
+```
+
+只有第 5 步成功后，Agent 才应该把 clawfetch 视为已经可以执行 browser-backed 抓取。
+
+可选 smoke test：
+
+```bash
+node node_modules/clawfetch/clawfetch.js https://example.com
+```
+
+成功时应输出 `--- METADATA ---` 和 `--- MARKDOWN ---`。
+
+bootstrap 脚本会把已发布的 `clawfetch` npm 包安装到当前 skill 目录，形成 `node_modules/clawfetch`。它不安装 browser runtime，不执行 `git clone`，不下载源码树，不修改全局 npm 状态，不改系统 PATH，也不安装无关工具。
 
 默认情况下，脚本跟随项目根目录 `package.json` 中的版本。如果这个 wrapper 被单独分发、读不到项目根目录，则回退到脚本中固定记录的版本。这个 fallback 只是为了独立 ClawHub 分发场景存在，维护时必须和当前对外发布的 CLI 版本保持一致。
 
 ## 使用方式
 
-bootstrap 之后，通过本地 CLI 调用：
+bootstrap 且 `runtime check` 成功之后，通过本地 CLI 调用：
 
 ```bash
 node node_modules/clawfetch/clawfetch.js https://example.com/article
@@ -45,6 +68,14 @@ node node_modules/clawfetch/clawfetch.js runtime diagnose --json
 skill 层不直接管理 browser runtime。它应该把 CLI 输出的 `NEXT:` 提示展示给 Agent 或操作者，而不是发明另一套恢复路径。
 
 browser runtime 的安装位置和生命周期由 CLI / 项目本体决定。这个 wrapper 不参与路径选择、runtime 修复逻辑或版本匹配。
+
+如果安装或检查失败，运行：
+
+```bash
+node node_modules/clawfetch/clawfetch.js runtime diagnose --json
+```
+
+然后按照 CLI 输出的 `NEXT:` 提示处理，不要在 skill 层发明另一套绕行方案。
 
 ## 边界
 

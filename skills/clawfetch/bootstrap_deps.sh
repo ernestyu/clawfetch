@@ -15,3 +15,18 @@ fi
 
 cd "$SCRIPT_DIR"
 npm install --no-save "clawfetch@$CLAWFETCH_VERSION"
+
+cat <<EOF
+
+clawfetch npm CLI installed in:
+  $SCRIPT_DIR/node_modules/clawfetch
+
+NEXT:
+  - Install the CLI-managed browser runtime:
+      node node_modules/clawfetch/clawfetch.js runtime install
+  - Verify readiness before fetching pages:
+      node node_modules/clawfetch/clawfetch.js runtime check
+  - Optional smoke test after runtime check succeeds:
+      node node_modules/clawfetch/clawfetch.js https://example.com
+
+EOF
