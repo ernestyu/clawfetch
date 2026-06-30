@@ -16,7 +16,7 @@ Installing this skill wrapper is not the same as installing a ready-to-run clawf
 
 ```bash
 cd <installed skill directory>
-./bootstrap_deps.sh
+sh bootstrap_deps.sh
 ```
 
 4. Install the browser runtime through the CLI:

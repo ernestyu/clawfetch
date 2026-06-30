@@ -16,7 +16,7 @@
 
 ```bash
 cd <installed skill directory>
-./bootstrap_deps.sh
+sh bootstrap_deps.sh
 ```
 
 4. 通过 CLI 安装 browser runtime：

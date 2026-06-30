@@ -1,5 +1,5 @@
 name: clawfetch
-version: 1.0.9
+version: 1.0.10
 description: Thin OpenClaw and ClawHub wrapper for the published clawfetch npm CLI.
 author: Ernest Yu
 license: MIT-0

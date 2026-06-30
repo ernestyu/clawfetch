@@ -1,7 +1,7 @@
 ---
 name: clawfetch
 description: Thin OpenClaw and ClawHub wrapper for the published clawfetch npm CLI, used to fetch web pages, GitHub READMEs, and Reddit threads as markdown.
-version: 1.0.9
+version: 1.0.10
 metadata:
   openclaw:
     requires:
@@ -40,7 +40,7 @@ First-time setup is not complete until both the npm CLI and the browser runtime 
 
 ```bash
 cd <installed skill directory>
-./bootstrap_deps.sh
+sh bootstrap_deps.sh
 ```
 
 3. Install the CLI-managed browser runtime:
