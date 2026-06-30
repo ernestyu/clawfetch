@@ -1,7 +1,7 @@
 ---
 name: clawfetch
 description: Thin OpenClaw and ClawHub wrapper for the published clawfetch npm CLI, used to fetch web pages, GitHub READMEs, and Reddit threads as markdown.
-version: 1.0.10
+version: 1.0.11
 metadata:
   openclaw:
     requires:
@@ -68,6 +68,27 @@ The bootstrap script installs the published `clawfetch` npm package into this sk
 When this skill lives inside the clawfetch project repository, bootstrap reads the project root `package.json` and installs that same version. If the wrapper is distributed without the project root, it uses the pinned fallback version in `bootstrap_deps.sh`; maintainers must keep that fallback aligned with the current published CLI version.
 
 Ready state means `node_modules/clawfetch` exists and `node node_modules/clawfetch/clawfetch.js runtime check` exits successfully. If runtime check fails, run `node node_modules/clawfetch/clawfetch.js runtime diagnose --json` and follow the CLI's `NEXT:` hints.
+
+## Configuration
+
+This skill includes a formal configuration file at:
+
+```text
+clawfetch.toml
+```
+
+From this skill directory, the CLI resolves that file as the fixed host config for `node_modules/clawfetch/clawfetch.js`. Do not place the long-lived skill configuration inside `node_modules/clawfetch`; that directory is a bootstrap-generated npm package install and may be replaced during repair, upgrade, or re-bootstrap.
+
+The default config is conservative:
+
+```toml
+[flaresolverr]
+enabled = false
+# url = "http://127.0.0.1:8191"
+max_timeout_ms = 60000
+```
+
+To enable FlareSolverr, edit this skill directory's `clawfetch.toml`, set `enabled = true`, and set `url` to a reachable FlareSolverr-compatible service. `FLARESOLVERR_URL` remains supported only as a compatibility or temporary override; it is not the preferred skill configuration path.
 
 ## Invocation
 

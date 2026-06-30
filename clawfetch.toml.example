@@ -1,10 +1,10 @@
-# Example project-local clawfetch configuration.
-# Copy this file to clawfetch.toml in your project root.
-# The CLI searches for clawfetch.toml from the current working directory upward.
+# Example clawfetch configuration.
+# In the OpenClaw / ClawHub skill, the formal config lives at:
+#   skills/clawfetch/clawfetch.toml
 
 [flaresolverr]
-# FlareSolverr is a first-class clawfetch feature for Cloudflare / bot challenge pages.
-# Update the URL to match your local service, Docker service name, or remote endpoint.
-enabled = true
-url = "http://127.0.0.1:8191"
+# Keep disabled by default. Set enabled = true and provide url only when using
+# FlareSolverr for Cloudflare / bot challenge pages.
+enabled = false
+# url = "http://127.0.0.1:8191"
 max_timeout_ms = 60000

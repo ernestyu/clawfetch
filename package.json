@@ -1,6 +1,6 @@
 {
   "name": "clawfetch",
-  "version": "1.0.10",
+  "version": "1.0.11",
   "description": "Playwright + Readability + Turndown based web page to Markdown scraper CLI.",
   "bin": {
     "clawfetch": "clawfetch.js"

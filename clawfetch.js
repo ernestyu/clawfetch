@@ -56,6 +56,26 @@ process.env.PLAYWRIGHT_BROWSERS_PATH = BROWSERS_PATH;
 const FLARESOLVERR_ENV_URL = process.env.FLARESOLVERR_URL || "";
 const DEFAULT_FLARESOLVERR_TIMEOUT_MS = 60000;
 
+function resolveConfigBoundary() {
+  const parent = path.dirname(COMPONENT_ROOT);
+  if (path.basename(parent) === "node_modules") {
+    const hostRoot = path.dirname(parent);
+    return {
+      root: hostRoot,
+      path: path.join(hostRoot, CONFIG_FILE_NAME),
+      source: "package-host",
+    };
+  }
+
+  return {
+    root: COMPONENT_ROOT,
+    path: path.join(COMPONENT_ROOT, CONFIG_FILE_NAME),
+    source: "component-root",
+  };
+}
+
+const CONFIG_BOUNDARY = resolveConfigBoundary();
+
 function readJsonFile(filePath) {
   try {
     return JSON.parse(fs.readFileSync(filePath, "utf8"));
@@ -67,18 +87,6 @@ function readJsonFile(filePath) {
 function writeJsonFile(filePath, data) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n", "utf8");
-}
-
-function findConfigFile(startDir = process.cwd()) {
-  let dir = path.resolve(startDir);
-  while (true) {
-    const candidate = path.join(dir, CONFIG_FILE_NAME);
-    if (fs.existsSync(candidate)) return candidate;
-
-    const parent = path.dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
 }
 
 function stripTomlComment(line) {
@@ -155,10 +163,12 @@ function parseClawfetchToml(filePath) {
 }
 
 function readClawfetchConfig() {
-  const configPath = findConfigFile();
-  if (!configPath) {
+  const configPath = CONFIG_BOUNDARY.path;
+  if (!fs.existsSync(configPath)) {
     return {
-      path: null,
+      path: configPath,
+      root: CONFIG_BOUNDARY.root,
+      source: CONFIG_BOUNDARY.source,
       found: false,
       data: {},
       error: null,
@@ -168,6 +178,8 @@ function readClawfetchConfig() {
   try {
     return {
       path: configPath,
+      root: CONFIG_BOUNDARY.root,
+      source: CONFIG_BOUNDARY.source,
       found: true,
       data: parseClawfetchToml(configPath),
       error: null,
@@ -175,6 +187,8 @@ function readClawfetchConfig() {
   } catch (e) {
     return {
       path: configPath,
+      root: CONFIG_BOUNDARY.root,
+      source: CONFIG_BOUNDARY.source,
       found: true,
       data: {},
       error: e && e.message ? e.message : String(e),
@@ -211,8 +225,9 @@ function resolveFlareSolverrConfig({ cliUrl = "", cliTimeoutMs = null, forceEnab
     errors.push(`${CONFIG_FILE_NAME} [flaresolverr].url is required when enabled = true.`);
   }
 
-  const url = cliUrl || tomlUrl || FLARESOLVERR_ENV_URL || "";
-  const urlSource = cliUrl ? "cli" : tomlUrl ? "toml" : FLARESOLVERR_ENV_URL ? "env" : "default";
+  const tomlUrlEnabled = tomlUrl && (tomlEnabled || forceEnable);
+  const url = cliUrl || tomlUrlEnabled || FLARESOLVERR_ENV_URL || tomlUrl || "";
+  const urlSource = cliUrl ? "cli" : tomlUrlEnabled ? "toml" : FLARESOLVERR_ENV_URL ? "env" : tomlUrl ? "toml" : "default";
   const timeoutMs =
     cliTimeoutMs !== null
       ? cliTimeoutMs
@@ -224,7 +239,7 @@ function resolveFlareSolverrConfig({ cliUrl = "", cliTimeoutMs = null, forceEnab
     forceEnable ||
     !!cliUrl ||
     tomlEnabled ||
-    (!file.found && !!FLARESOLVERR_ENV_URL);
+    !!FLARESOLVERR_ENV_URL;
 
   if (timeoutMs <= 0) {
     errors.push("FlareSolverr timeout must be a positive integer.");
@@ -240,6 +255,8 @@ function resolveFlareSolverrConfig({ cliUrl = "", cliTimeoutMs = null, forceEnab
     maxTimeoutMs: timeoutMs,
     timeoutSource,
     configPath: file.path,
+    configRoot: file.root,
+    configSource: file.source,
     configFound: file.found,
     envUrlPresent: !!FLARESOLVERR_ENV_URL,
     errors,
@@ -514,6 +531,8 @@ async function collectRuntimeStatus({ verifyLaunch = false } = {}) {
     },
     config: {
       clawfetchTomlPath: null,
+      clawfetchTomlRoot: null,
+      clawfetchTomlSource: null,
       clawfetchTomlFound: false,
       flaresolverr: null,
     },
@@ -542,6 +561,8 @@ async function collectRuntimeStatus({ verifyLaunch = false } = {}) {
 
   const flareConfig = resolveFlareSolverrConfig();
   status.config.clawfetchTomlPath = flareConfig.configPath;
+  status.config.clawfetchTomlRoot = flareConfig.configRoot;
+  status.config.clawfetchTomlSource = flareConfig.configSource;
   status.config.clawfetchTomlFound = flareConfig.configFound;
   status.config.flaresolverr = {
     enabled: flareConfig.enabled,
@@ -660,7 +681,9 @@ function printRuntimeStatusText(status) {
   }
   if (status.config && status.config.flaresolverr) {
     const flare = status.config.flaresolverr;
-    console.log(`ConfigFile: ${status.config.clawfetchTomlPath || "not-found"}`);
+    console.log(`ConfigFile: ${status.config.clawfetchTomlPath}`);
+    console.log(`ConfigBoundary: ${status.config.clawfetchTomlSource || "unknown"}`);
+    console.log(`ConfigExists: ${status.config.clawfetchTomlFound ? "yes" : "no"}`);
     console.log(`FlareSolverrEnabled: ${flare.enabled ? "yes" : "no"}`);
     console.log(`FlareSolverrURL: ${flare.url || "not-configured"} (${flare.urlSource})`);
     console.log(`FlareSolverrTimeoutMs: ${flare.maxTimeoutMs} (${flare.timeoutSource})`);
@@ -930,7 +953,8 @@ function printFlareSolverrConfigErrors(config) {
 function printFlareSolverrMissingNext() {
   console.error(
     "NEXT:\n" +
-      `  - Add FlareSolverr configuration to ${CONFIG_FILE_NAME} in this project:\n` +
+      `  - Configure FlareSolverr in the fixed clawfetch config file:\n` +
+      `      ${CONFIG_BOUNDARY.path}\n` +
       "      [flaresolverr]\n" +
       "      enabled = true\n" +
       "      url = \"http://127.0.0.1:8191\"\n" +

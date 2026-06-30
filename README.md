@@ -151,45 +151,52 @@ In an OpenClaw setting, a typical pattern is:
 
 ## 4. Configuration
 
-`clawfetch` supports a project-local configuration file named `clawfetch.toml`.
-Use `clawfetch.toml.example` as the template, then copy it into your project
-root as `clawfetch.toml`. This configuration is mainly used for FlareSolverr so
-Agents can discover the scraping strategy from project files instead of relying
-on shell/session state.
+`clawfetch` uses a fixed configuration path derived from the CLI installation
+boundary. In the OpenClaw / ClawHub skill distribution, the primary config file
+is:
 
-Bootstrap example:
-
-```bash
-cp clawfetch.toml.example clawfetch.toml
+```text
+skills/clawfetch/clawfetch.toml
 ```
 
-Example:
+That file is part of the skill wrapper and exists immediately after the skill is
+installed. It belongs to the skill host directory, not to
+`skills/clawfetch/node_modules/clawfetch`, because `node_modules/clawfetch` is a
+bootstrap-generated npm package install that may be replaced during upgrade or
+repair.
+
+Default config:
 
 ```toml
 [flaresolverr]
-enabled = true
-url = "http://127.0.0.1:8191"
+enabled = false
+# url = "http://127.0.0.1:8191"
 max_timeout_ms = 60000
 ```
 
-Lookup rule:
+Path rule:
 
-- Starting from the current working directory, `clawfetch` searches upward for
-  the first `clawfetch.toml`.
-- If no file is found, project configuration is considered absent.
+- When the CLI runs from `skills/clawfetch/node_modules/clawfetch/clawfetch.js`,
+  it reads only `skills/clawfetch/clawfetch.toml`.
+- More generally, when `clawfetch` is installed under a `node_modules` directory,
+  its host config is the `clawfetch.toml` next to that `node_modules` directory.
+- When running directly from a source checkout, the expected config path is
+  `clawfetch.toml` in the component root.
+- The caller's current working directory is not used for upward config search.
 - Missing FlareSolverr fields use defaults unless `enabled = true` requires a
   usable URL.
 
 Precedence:
 
 1. CLI arguments: `--flaresolverr-url`, `--flaresolverr-timeout-ms`
-2. `clawfetch.toml`
-3. `FLARESOLVERR_URL` as a compatibility fallback
-4. Default enabled FlareSolverr behavior when `clawfetch.toml` enables it
+2. Fixed host config: `skills/clawfetch/clawfetch.toml`
+3. `FLARESOLVERR_URL` as a compatibility / temporary override
+4. Default disabled FlareSolverr behavior
 
 `FLARESOLVERR_URL` is still supported for older workflows and temporary
-overrides, but new projects should prefer `clawfetch.toml` created from
-`clawfetch.toml.example`.
+overrides, but new skill installs should prefer the fixed
+`skills/clawfetch/clawfetch.toml` file. To enable FlareSolverr, edit that file,
+set `enabled = true`, and provide a reachable `url`.
 
 ---
 

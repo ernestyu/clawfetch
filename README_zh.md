@@ -122,41 +122,47 @@ clawfetch runtime <status|install|check|repair|upgrade|clean|diagnose>
 
 ## 配置文件
 
-`clawfetch` 支持项目内显式配置文件 `clawfetch.toml`。请把
-`clawfetch.toml.example` 作为模板复制到项目根目录并命名为
-`clawfetch.toml`。它主要用于配置 FlareSolverr，让人和 Agent 能直接从
-项目文件中理解抓取策略，而不是依赖外部 shell/session 状态。
+`clawfetch` 使用由 CLI 安装边界推导出的固定配置路径。在 OpenClaw /
+ClawHub skill 分发场景中，主配置文件固定为：
 
-初始化示例：
-
-```bash
-cp clawfetch.toml.example clawfetch.toml
+```text
+skills/clawfetch/clawfetch.toml
 ```
 
-示例：
+这个文件属于 skill 宿主目录，安装 skill 后即存在。它不放在
+`skills/clawfetch/node_modules/clawfetch` 中，因为后者是 bootstrap 后生成的
+npm 包安装产物，升级、重装或修复时可能被替换，不适合作为长期维护入口。
+
+默认配置：
 
 ```toml
 [flaresolverr]
-enabled = true
-url = "http://127.0.0.1:8191"
+enabled = false
+# url = "http://127.0.0.1:8191"
 max_timeout_ms = 60000
 ```
 
-查找规则：
+路径规则：
 
-- 从当前工作目录开始，向上查找第一个 `clawfetch.toml`；
-- 如果找不到，则视为没有项目配置；
+- 当 CLI 从 `skills/clawfetch/node_modules/clawfetch/clawfetch.js` 运行时，
+  只读取 `skills/clawfetch/clawfetch.toml`；
+- 更一般地说，当 `clawfetch` 安装在某个 `node_modules` 下时，宿主配置文件
+  是该 `node_modules` 同级目录里的 `clawfetch.toml`；
+- 直接从源码 checkout 运行时，期望配置文件位于组件根目录的
+  `clawfetch.toml`；
+- 调用方当前工作目录不会参与向上查找；
 - FlareSolverr 字段缺失时使用默认值，但 `enabled = true` 时必须有可用 URL。
 
 优先级：
 
 1. CLI 参数：`--flaresolverr-url`、`--flaresolverr-timeout-ms`
-2. `clawfetch.toml`
-3. `FLARESOLVERR_URL` 兼容旧流程和临时覆盖
-4. 当 `clawfetch.toml` 开启时默认启用 FlareSolverr
+2. 固定宿主配置：`skills/clawfetch/clawfetch.toml`
+3. `FLARESOLVERR_URL` 作为兼容旧流程和临时覆盖
+4. 默认不启用 FlareSolverr
 
-`FLARESOLVERR_URL` 仍然兼容，但新项目应优先使用由
-`clawfetch.toml.example` 复制得到的 `clawfetch.toml`。
+`FLARESOLVERR_URL` 仍然兼容，但新的 skill 安装应优先维护固定位置的
+`skills/clawfetch/clawfetch.toml`。如需启用 FlareSolverr，请显式把
+`enabled` 改为 `true`，并填入可访问的 `url`。
 
 ---
 

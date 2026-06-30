@@ -45,6 +45,41 @@ The bootstrap script installs the published `clawfetch` npm package into this sk
 
 By default the script follows the version in the project root `package.json`. If the wrapper is distributed without the project root, it falls back to the pinned version recorded in the script. That fallback exists only because standalone ClawHub distribution cannot dynamically read the project root; keep it aligned with the current published CLI version.
 
+## Configuration
+
+This skill ships with a formal config file:
+
+```text
+clawfetch.toml
+```
+
+In the normal skill layout, the CLI entry is:
+
+```text
+node_modules/clawfetch/clawfetch.js
+```
+
+That CLI resolves the fixed host config as this skill directory's `clawfetch.toml`.
+It does not search upward from the caller's current working directory. Keep
+long-lived FlareSolverr settings in this file, not inside
+`node_modules/clawfetch`, because `node_modules/clawfetch` is an npm install
+artifact that may be replaced during bootstrap, repair, or upgrade.
+
+Default config:
+
+```toml
+[flaresolverr]
+enabled = false
+# url = "http://127.0.0.1:8191"
+max_timeout_ms = 60000
+```
+
+To enable FlareSolverr, edit `clawfetch.toml`, set `enabled = true`, and provide
+a reachable `url`, for example `http://127.0.0.1:8191` or
+`http://flaresolverr:8191` in Docker/service-network setups. `FLARESOLVERR_URL`
+is still accepted as a compatibility or temporary override, but it is not the
+recommended primary configuration path.
+
 ## Usage
 
 After bootstrap and a successful runtime check, call the local CLI:

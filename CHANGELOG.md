@@ -2,6 +2,18 @@
 
 All notable changes to this project should be documented in this file.
 
+## v1.0.11 - 2026-06-30
+
+### Added
+- Added a formal `skills/clawfetch/clawfetch.toml` file to the skill distribution.
+
+### Changed
+- Changed the primary FlareSolverr config path from caller-cwd upward search to a fixed host config path.
+- In the OpenClaw / ClawHub skill layout, the primary config is now `skills/clawfetch/clawfetch.toml`.
+- Kept `FLARESOLVERR_URL` only as a compatibility / temporary override path instead of the recommended primary configuration.
+- Updated default FlareSolverr config to stay disabled until `enabled = true` and a reachable `url` are explicitly set.
+- Aligned the project version, skill wrapper version, and bootstrap fallback version to `1.0.11`.
+
 ## v1.0.10 - 2026-06-30
 
 ### Added
