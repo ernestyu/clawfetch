@@ -1,0 +1,21 @@
+name: clawfetch
+version: 0.1.7
+description: Thin OpenClaw and ClawHub wrapper for the published clawfetch npm CLI.
+author: Ernest Yu
+license: Apache-2.0
+entry: SKILL.md
+permissions:
+  shell: true
+  network: true
+  filesystem:
+    read: true
+    write: false
+tags:
+  - clawfetch
+  - web-fetch
+  - markdown
+  - playwright
+  - openclaw
+  - clawhub
+models:
+  - "*"
