@@ -56,7 +56,10 @@ clawfetch runtime check
 ```
 
 `clawfetch` 会把自己的 Playwright 浏览器二进制放在组件专属 runtime 目录中，
-不再依赖宿主环境里碰巧存在的 Playwright 浏览器缓存。默认位置：
+不再依赖宿主环境里碰巧存在的 Playwright 浏览器缓存。同时，`clawfetch`
+只支持一种 Playwright JS runtime 形态：安装在 clawfetch 包自身 `node_modules`
+边界内、且版本满足 clawfetch 声明范围的 `playwright-core`。浏览器 runtime
+默认位置：
 
 - Windows：`%LOCALAPPDATA%\clawfetch\ms-playwright`
 - Linux/macOS：`$XDG_CACHE_HOME/clawfetch/ms-playwright` 或 `~/.cache/clawfetch/ms-playwright`
@@ -90,10 +93,12 @@ clawfetch runtime <status|install|check|repair|upgrade|clean|diagnose>
 
 运行时生命周期命令：
 
-- `clawfetch runtime status`：查看 clawfetch 版本、Playwright 包版本、
-  受控浏览器路径、manifest，以及预期 Chromium 二进制是否存在。
-- `clawfetch runtime install`：为当前 Playwright 包安装对应 Chromium runtime。
-- `clawfetch runtime check`：实际启动一次 Chromium，验证 runtime 是否健康。
+- `clawfetch runtime status`：查看 clawfetch 版本、受支持的 Playwright 包模型、
+  实际解析到的 Playwright 包来源/版本、受控浏览器路径、manifest 匹配状态，
+  以及预期 Chromium 二进制是否存在。
+- `clawfetch runtime install`：为当前受支持的 `playwright-core` 包安装对应 Chromium runtime。
+- `clawfetch runtime check`：在 JS 包类型、包来源、包版本、manifest、浏览器二进制
+  都符合受支持 runtime 边界后，实际启动一次 Chromium 验证健康状态。
 - `clawfetch runtime repair`：当文件缺失或损坏时，重新安装当前 runtime。
 - `clawfetch runtime upgrade`：在升级 clawfetch/Playwright 包后，安装当前版本期望的浏览器 runtime。
 - `clawfetch runtime clean`：默认输出旧 runtime 条目的 dry-run 清单；
@@ -203,14 +208,19 @@ fast-path，如 GitHub / Reddit），不依赖 FlareSolverr。
 
 `clawfetch` 依赖以下 npm 包：
 
-- `playwright-core`（或 `playwright`）
+- `playwright-core`
 - `@mozilla/readability`
 - `jsdom`
 - `turndown`
 
 运行时行为：
 
-- 首先尝试 `require("playwright-core")`，失败则尝试 `require("playwright")`；
+- 只支持 `playwright-core` 作为 Playwright JS runtime；
+- 要求 `playwright-core` 从 clawfetch 包自身的 `node_modules` 边界内解析，
+  不能来自宿主项目、其它 skill、其它全局安装路径或偶然命中的外部依赖；
+- 要求解析到的 `playwright-core` 版本满足 clawfetch 声明的依赖范围；
+- 要求受控 Chromium runtime 与当前 clawfetch 组件、当前 `playwright-core`
+  包以及 runtime manifest 保持一致；
 - 对其它依赖逐个 `require` 检测；
 - 如果检测到缺失且 **没有** 使用 `--auto-install`：
   - 打印缺失列表以及推荐的安装命令；
@@ -224,7 +234,14 @@ fast-path，如 GitHub / Reddit），不依赖 FlareSolverr。
 
   - 如果安装失败，同样给出明确的 `npm install` 建议让操作者处理。
 
-此设计是为了适配自动化环境（尤其是 OpenClaw / Agent），**默认不在背后偷偷安装依赖**，而是给出可执行的下一步指令。
+`playwright` 不再被视为 `playwright-core` 的等价替代品。如果受支持包缺失、
+版本不符、来源不符，或与受控浏览器 runtime 不匹配，`clawfetch` 会直接报
+runtime 错误，不会自动尝试其它包。请通过 `clawfetch runtime install` /
+`repair` / `upgrade` / `clean` / `diagnose --json` 把组件自己的 runtime
+修复到受支持状态。
+
+此设计是为了适配自动化环境（尤其是 OpenClaw / Agent），**默认不在背后偷偷安装依赖**，
+而是给出可执行的下一步指令；对于基础组件，确定性比自动 fallback 更重要。
 
 ---
 

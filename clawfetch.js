@@ -16,8 +16,8 @@
 //   --- MARKDOWN ---
 //   <markdown>
 //
-// Dependencies are resolved at runtime with basic checks:
-// - Prefer playwright-core; fall back to playwright if needed.
+// Dependencies are resolved against clawfetch's supported runtime boundary:
+// - Only playwright-core is supported as the Playwright JS runtime.
 // - If required npm packages are missing, print installation hints and exit.
 // - If --auto-install is provided, clawfetch will attempt a local `npm install`
 //   for the missing packages (in the clawfetch install directory).
@@ -50,6 +50,11 @@ const RUNTIME_ROOT = DEFAULT_RUNTIME_ROOT;
 const BROWSERS_PATH = path.join(RUNTIME_ROOT, "ms-playwright");
 const RUNTIME_MANIFEST_PATH = path.join(RUNTIME_ROOT, "runtime.json");
 const PREVIOUS_PLAYWRIGHT_BROWSERS_PATH = process.env.PLAYWRIGHT_BROWSERS_PATH || "";
+const SUPPORTED_PLAYWRIGHT_PACKAGE = "playwright-core";
+const UNSUPPORTED_PLAYWRIGHT_PACKAGE = "playwright";
+const SUPPORTED_PLAYWRIGHT_VERSION_RANGE =
+  (PACKAGE_JSON.dependencies && PACKAGE_JSON.dependencies[SUPPORTED_PLAYWRIGHT_PACKAGE]) || "*";
+const COMPONENT_NODE_MODULES_DIR = path.join(__dirname, "node_modules");
 
 // Keep clawfetch's Playwright browser binaries inside a component-owned runtime
 // directory instead of relying on the host's ambient Playwright cache.
@@ -70,28 +75,134 @@ function writeJsonFile(filePath, data) {
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n", "utf8");
 }
 
-function loadPlaywrightRuntime() {
-  const attempts = [];
+function isInsidePath(parentPath, childPath) {
+  const parent = path.resolve(parentPath);
+  const child = path.resolve(childPath);
+  const relative = path.relative(parent, child);
+  return relative === "" || (!!relative && !relative.startsWith("..") && !path.isAbsolute(relative));
+}
 
-  for (const packageName of ["playwright-core", "playwright"]) {
-    try {
-      const mod = require(packageName);
-      const pkgPath = require.resolve(`${packageName}/package.json`);
-      const pkg = require(pkgPath);
-      return {
-        chromium: mod.chromium,
-        packageName,
-        packageVersion: pkg.version || "unknown",
-        packageRoot: path.dirname(pkgPath),
-      };
-    } catch (e) {
-      attempts.push(`${packageName}: ${e && e.message ? e.message : String(e)}`);
-    }
+function parseSemver(version) {
+  const match = String(version || "").match(/^(\d+)\.(\d+)\.(\d+)/);
+  if (!match) return null;
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+  };
+}
+
+function compareSemver(a, b) {
+  for (const key of ["major", "minor", "patch"]) {
+    if (a[key] > b[key]) return 1;
+    if (a[key] < b[key]) return -1;
+  }
+  return 0;
+}
+
+function versionSatisfiesRange(version, range) {
+  if (!range || range === "*" || range === "latest") return true;
+
+  const parsedVersion = parseSemver(version);
+  if (!parsedVersion) return false;
+
+  if (range.startsWith("^")) {
+    const base = parseSemver(range.slice(1));
+    if (!base || compareSemver(parsedVersion, base) < 0) return false;
+
+    const upper =
+      base.major > 0
+        ? { major: base.major + 1, minor: 0, patch: 0 }
+        : base.minor > 0
+          ? { major: 0, minor: base.minor + 1, patch: 0 }
+          : { major: 0, minor: 0, patch: base.patch + 1 };
+    return compareSemver(parsedVersion, upper) < 0;
   }
 
-  const err = new Error("Missing playwright-core (or playwright).");
-  err.attempts = attempts;
-  throw err;
+  if (range.startsWith(">=")) {
+    const base = parseSemver(range.slice(2).trim());
+    return !!base && compareSemver(parsedVersion, base) >= 0;
+  }
+
+  const exact = parseSemver(range);
+  return !!exact && compareSemver(parsedVersion, exact) === 0;
+}
+
+function resolvePackageInfo(packageName) {
+  const pkgPath = require.resolve(`${packageName}/package.json`, { paths: [__dirname] });
+  const pkg = require(pkgPath);
+  return {
+    packageName,
+    packageVersion: pkg.version || "unknown",
+    packageRoot: path.dirname(pkgPath),
+    packageJsonPath: pkgPath,
+  };
+}
+
+function optionalPackageInfo(packageName) {
+  try {
+    return resolvePackageInfo(packageName);
+  } catch {
+    return null;
+  }
+}
+
+function createRuntimeError(code, message, details = {}) {
+  const err = new Error(message);
+  err.code = code;
+  err.details = details;
+  return err;
+}
+
+function loadPlaywrightRuntime() {
+  let info;
+  try {
+    info = resolvePackageInfo(SUPPORTED_PLAYWRIGHT_PACKAGE);
+  } catch (e) {
+    const unsupported = optionalPackageInfo(UNSUPPORTED_PLAYWRIGHT_PACKAGE);
+    throw createRuntimeError(
+      "CLAWFETCH_PLAYWRIGHT_MISSING",
+      `Missing supported Playwright JS runtime: ${SUPPORTED_PLAYWRIGHT_PACKAGE}.`,
+      {
+        supportedPackage: SUPPORTED_PLAYWRIGHT_PACKAGE,
+        unsupportedPackageFound: unsupported,
+        loadError: e && e.message ? e.message : String(e),
+      }
+    );
+  }
+
+  if (!isInsidePath(COMPONENT_NODE_MODULES_DIR, info.packageRoot)) {
+    throw createRuntimeError(
+      "CLAWFETCH_PLAYWRIGHT_SOURCE_UNSUPPORTED",
+      `Unsupported Playwright package source: ${info.packageRoot}`,
+      {
+        supportedPackage: SUPPORTED_PLAYWRIGHT_PACKAGE,
+        expectedSourceRoot: COMPONENT_NODE_MODULES_DIR,
+        packageRoot: info.packageRoot,
+      }
+    );
+  }
+
+  if (!versionSatisfiesRange(info.packageVersion, SUPPORTED_PLAYWRIGHT_VERSION_RANGE)) {
+    throw createRuntimeError(
+      "CLAWFETCH_PLAYWRIGHT_VERSION_UNSUPPORTED",
+      `Unsupported ${SUPPORTED_PLAYWRIGHT_PACKAGE} version ${info.packageVersion}; expected ${SUPPORTED_PLAYWRIGHT_VERSION_RANGE}.`,
+      {
+        supportedPackage: SUPPORTED_PLAYWRIGHT_PACKAGE,
+        supportedVersionRange: SUPPORTED_PLAYWRIGHT_VERSION_RANGE,
+        packageVersion: info.packageVersion,
+      }
+    );
+  }
+
+  const mod = require(info.packageRoot);
+  return {
+    chromium: mod.chromium,
+    packageName: info.packageName,
+    packageVersion: info.packageVersion,
+    packageRoot: info.packageRoot,
+    packageJsonPath: info.packageJsonPath,
+  };
 }
 
 function getBrowserDirFromExecutable(executablePath) {
@@ -121,12 +232,79 @@ function listRuntimeEntries() {
   }
 }
 
+function runtimeManifestMatches(status) {
+  const manifest = status.runtime.manifest;
+  if (!manifest || !status.playwright || !status.playwright.packageName) return false;
+
+  return (
+    manifest.componentName === status.component.name &&
+    manifest.componentVersion === status.component.version &&
+    manifest.playwrightPackage === status.playwright.packageName &&
+    manifest.playwrightVersion === status.playwright.packageVersion &&
+    manifest.browserName === status.browser.name &&
+    path.resolve(manifest.runtimeRoot || "") === path.resolve(status.runtime.root) &&
+    path.resolve(manifest.browsersPath || "") === path.resolve(status.runtime.browsersPath)
+  );
+}
+
+function finalizeRuntimeChecks(status) {
+  status.checks.playwrightPackageType =
+    status.playwright && status.playwright.packageName === SUPPORTED_PLAYWRIGHT_PACKAGE ? "ok" : "failed";
+  status.checks.playwrightVersion =
+    status.playwright &&
+    versionSatisfiesRange(status.playwright.packageVersion, SUPPORTED_PLAYWRIGHT_VERSION_RANGE)
+      ? "ok"
+      : "failed";
+  status.checks.playwrightSource =
+    status.playwright && status.playwright.packageRoot &&
+    isInsidePath(COMPONENT_NODE_MODULES_DIR, status.playwright.packageRoot)
+      ? "ok"
+      : "failed";
+  status.checks.browserManaged =
+    status.browser.executablePath && isInsidePath(BROWSERS_PATH, status.browser.executablePath) ? "ok" : "failed";
+  status.checks.browserExecutable = status.browser.executableExists ? "ok" : "failed";
+  status.checks.manifestMatches = runtimeManifestMatches(status) ? "ok" : "failed";
+  status.checks.runtimeComplete =
+    status.checks.playwrightPackageType === "ok" &&
+    status.checks.playwrightVersion === "ok" &&
+    status.checks.playwrightSource === "ok" &&
+    status.checks.browserManaged === "ok" &&
+    status.checks.browserExecutable === "ok" &&
+    status.checks.manifestMatches === "ok";
+
+  status.errors = [];
+  if (status.checks.playwrightPackageType !== "ok") {
+    status.errors.push(`Expected Playwright JS package ${SUPPORTED_PLAYWRIGHT_PACKAGE}.`);
+  }
+  if (status.checks.playwrightVersion !== "ok") {
+    status.errors.push(`Expected ${SUPPORTED_PLAYWRIGHT_PACKAGE} version ${SUPPORTED_PLAYWRIGHT_VERSION_RANGE}.`);
+  }
+  if (status.checks.playwrightSource !== "ok") {
+    status.errors.push(`Expected Playwright package under ${COMPONENT_NODE_MODULES_DIR}.`);
+  }
+  if (status.checks.browserManaged !== "ok") {
+    status.errors.push(`Expected Chromium executable under ${BROWSERS_PATH}.`);
+  }
+  if (status.checks.browserExecutable !== "ok") {
+    status.errors.push("Expected Chromium executable is missing.");
+  }
+  if (status.checks.manifestMatches !== "ok") {
+    status.errors.push("Runtime manifest does not match the current component, Playwright package, and browser runtime.");
+  }
+}
+
 async function collectRuntimeStatus({ verifyLaunch = false } = {}) {
   const status = {
     component: {
       name: PACKAGE_JSON.name || "clawfetch",
       version: PACKAGE_JSON.version || "unknown",
       installDir: __dirname,
+    },
+    supportedRuntime: {
+      playwrightPackage: SUPPORTED_PLAYWRIGHT_PACKAGE,
+      playwrightVersionRange: SUPPORTED_PLAYWRIGHT_VERSION_RANGE,
+      packageSourceRoot: COMPONENT_NODE_MODULES_DIR,
+      browserName: "chromium",
     },
     runtime: {
       root: RUNTIME_ROOT,
@@ -144,10 +322,17 @@ async function collectRuntimeStatus({ verifyLaunch = false } = {}) {
       installedEntries: listRuntimeEntries(),
     },
     checks: {
+      playwrightPackageType: "failed",
+      playwrightVersion: "failed",
+      playwrightSource: "failed",
+      browserManaged: "failed",
+      browserExecutable: "failed",
+      manifestMatches: "failed",
       runtimeComplete: false,
       launch: verifyLaunch ? "failed" : "not-run",
       launchError: null,
     },
+    errors: [],
   };
 
   let pw;
@@ -157,6 +342,7 @@ async function collectRuntimeStatus({ verifyLaunch = false } = {}) {
       packageName: pw.packageName,
       packageVersion: pw.packageVersion,
       packageRoot: pw.packageRoot,
+      packageJsonPath: pw.packageJsonPath,
     };
   } catch (e) {
     status.checks.launchError = e.message;
@@ -164,9 +350,12 @@ async function collectRuntimeStatus({ verifyLaunch = false } = {}) {
       packageName: null,
       packageVersion: null,
       packageRoot: null,
+      packageJsonPath: null,
       loadError: e.message,
-      attempts: e.attempts || [],
+      errorCode: e.code || "CLAWFETCH_PLAYWRIGHT_LOAD_FAILED",
+      details: e.details || {},
     };
+    finalizeRuntimeChecks(status);
     return status;
   }
 
@@ -176,12 +365,13 @@ async function collectRuntimeStatus({ verifyLaunch = false } = {}) {
     status.browser.browserDir = getBrowserDirFromExecutable(executablePath);
     status.browser.executableExists = !!(executablePath && fs.existsSync(executablePath));
     status.browser.installedEntries = listRuntimeEntries();
-    status.checks.runtimeComplete = status.browser.executableExists;
   } catch (e) {
     status.checks.launchError = e.message;
   }
 
-  if (verifyLaunch && pw.chromium) {
+  finalizeRuntimeChecks(status);
+
+  if (verifyLaunch && status.checks.runtimeComplete && pw.chromium) {
     let browser;
     try {
       browser = await pw.chromium.launch({ headless: true, args: ["--no-sandbox"] });
@@ -195,6 +385,8 @@ async function collectRuntimeStatus({ verifyLaunch = false } = {}) {
         await browser?.close();
       } catch {}
     }
+  } else if (verifyLaunch && !status.checks.runtimeComplete && !status.checks.launchError) {
+    status.checks.launchError = "Unsupported or incomplete clawfetch Playwright runtime.";
   }
 
   return status;
@@ -210,6 +402,10 @@ function printRuntimeStatusText(status) {
     console.log(`Host PLAYWRIGHT_BROWSERS_PATH ignored: ${status.runtime.previousPlaywrightBrowsersPath}`);
   }
   console.log(
+    `SupportedPlaywright: ${status.supportedRuntime.playwrightPackage}@${status.supportedRuntime.playwrightVersionRange}`
+  );
+  console.log(`ExpectedPlaywrightSource: ${status.supportedRuntime.packageSourceRoot}`);
+  console.log(
     `Playwright: ${status.playwright && status.playwright.packageName ? `${status.playwright.packageName}@${status.playwright.packageVersion}` : "missing"}`
   );
   if (status.playwright && status.playwright.packageRoot) {
@@ -218,10 +414,21 @@ function printRuntimeStatusText(status) {
   console.log(`Browser: ${status.browser.name}`);
   console.log(`Executable: ${status.browser.executablePath || "unknown"}`);
   console.log(`ExecutableExists: ${status.browser.executableExists ? "yes" : "no"}`);
+  console.log(`PlaywrightPackageType: ${status.checks.playwrightPackageType}`);
+  console.log(`PlaywrightVersion: ${status.checks.playwrightVersion}`);
+  console.log(`PlaywrightSource: ${status.checks.playwrightSource}`);
+  console.log(`BrowserManaged: ${status.checks.browserManaged}`);
+  console.log(`ManifestMatches: ${status.checks.manifestMatches}`);
   console.log(`RuntimeComplete: ${status.checks.runtimeComplete ? "yes" : "no"}`);
   console.log(`LaunchCheck: ${status.checks.launch}`);
   if (status.checks.launchError) {
     console.log(`LaunchError: ${status.checks.launchError.split("\n")[0]}`);
+  }
+  if (status.errors.length > 0) {
+    console.log("RuntimeErrors:");
+    for (const error of status.errors) {
+      console.log(`  - ${error}`);
+    }
   }
   if (status.browser.installedEntries.length > 0) {
     console.log(`InstalledEntries: ${status.browser.installedEntries.join(", ")}`);
@@ -235,8 +442,41 @@ function printRuntimeNext(status, commandName) {
   if (!status.playwright || !status.playwright.packageName) {
     console.error(
       "\nNEXT:\n" +
-        "  - Install clawfetch dependencies in the package directory:\n" +
-        "      npm install\n"
+        `  - Install the supported Playwright JS runtime in the clawfetch package directory:\n` +
+        `      npm install ${SUPPORTED_PLAYWRIGHT_PACKAGE}@\"${SUPPORTED_PLAYWRIGHT_VERSION_RANGE}\"\n` +
+        "  - Then initialize the controlled browser runtime:\n" +
+        "      clawfetch runtime install\n"
+    );
+    return;
+  }
+
+  if (status.checks.playwrightSource !== "ok") {
+    console.error(
+      "\nNEXT:\n" +
+        "  - Reinstall clawfetch dependencies so Playwright resolves from the component package directory:\n" +
+        "      npm install\n" +
+        "  - Remove or ignore ambient Playwright packages outside clawfetch; they are not supported runtime sources.\n"
+    );
+    return;
+  }
+
+  if (status.checks.playwrightVersion !== "ok") {
+    console.error(
+      "\nNEXT:\n" +
+        `  - Install a supported ${SUPPORTED_PLAYWRIGHT_PACKAGE} version:\n` +
+        `      npm install ${SUPPORTED_PLAYWRIGHT_PACKAGE}@\"${SUPPORTED_PLAYWRIGHT_VERSION_RANGE}\"\n` +
+        "  - Then upgrade the controlled browser runtime:\n" +
+        "      clawfetch runtime upgrade\n"
+    );
+    return;
+  }
+
+  if (status.checks.manifestMatches !== "ok" && status.browser.executableExists) {
+    console.error(
+      "\nNEXT:\n" +
+        "  - Upgrade or repair the controlled browser runtime so the manifest matches this component:\n" +
+        "      clawfetch runtime upgrade\n" +
+        "      clawfetch runtime check\n"
     );
     return;
   }
@@ -337,7 +577,7 @@ async function handleRuntimeCommand(args) {
     if (json) console.log(JSON.stringify(status, null, 2));
     else printRuntimeStatusText(status);
     printRuntimeNext(status, "status");
-    return status.playwright && status.playwright.packageName ? 0 : 1;
+    return status.checks.runtimeComplete ? 0 : 1;
   }
 
   if (command === "check" || command === "diagnose") {
@@ -353,11 +593,21 @@ async function handleRuntimeCommand(args) {
       runPlaywrightInstall(command);
     } catch (e) {
       console.error(`ERROR: Runtime ${command} failed: ${e.message}`);
-      console.error(
-        "NEXT:\n" +
-          "  - Check network access and package dependencies, then retry:\n" +
-          `      clawfetch runtime ${command}\n`
-      );
+      if (e && e.code && e.code.startsWith("CLAWFETCH_PLAYWRIGHT_")) {
+        console.error(
+          "NEXT:\n" +
+            "  - Fix the supported Playwright JS runtime inside the clawfetch package directory:\n" +
+            "      npm install\n" +
+            "  - Then retry the runtime lifecycle command:\n" +
+            `      clawfetch runtime ${command}\n`
+        );
+      } else {
+        console.error(
+          "NEXT:\n" +
+            "  - Check network access and package dependencies, then retry:\n" +
+            `      clawfetch runtime ${command}\n`
+        );
+      }
       return e.exitCode || 1;
     }
 
@@ -591,14 +841,31 @@ if (!url || !/^https?:\/\//i.test(url)) {
 const disableRedditRss = flags.has("--no-reddit-rss");
 const autoInstallDeps = flags.has("--auto-install");
 
+function printPlaywrightRuntimeError(error) {
+  console.error(`ERROR: Unsupported clawfetch Playwright runtime: ${error.message}`);
+  console.error(
+    "\nNEXT:\n" +
+      "  - Inspect the runtime boundary:\n" +
+      "      clawfetch runtime diagnose --json\n" +
+      "  - Repair or upgrade the component-owned runtime:\n" +
+      "      clawfetch runtime repair\n" +
+      "      clawfetch runtime check\n"
+  );
+}
+
 function loadDeps() {
   const missing = [];
+  let runtimeError = null;
 
   let runtime;
   try {
     runtime = loadPlaywrightRuntime();
-  } catch {
-    missing.push("playwright-core (or playwright)");
+  } catch (e) {
+    if (e && e.code === "CLAWFETCH_PLAYWRIGHT_MISSING") {
+      missing.push(SUPPORTED_PLAYWRIGHT_PACKAGE);
+    } else {
+      runtimeError = e;
+    }
   }
 
   let Readability;
@@ -621,6 +888,11 @@ function loadDeps() {
     missing.push("jsdom");
   }
 
+  if (runtimeError) {
+    printPlaywrightRuntimeError(runtimeError);
+    process.exit(1);
+  }
+
   if (missing.length > 0) {
     if (autoInstallDeps) {
       console.error("WARN: Missing required npm packages:\n  - " + missing.join("\n  - "));
@@ -635,9 +907,9 @@ function loadDeps() {
           "ERROR: npm install failed.\n" +
             "NEXT:\n" +
             "  - Install dependencies manually:\n" +
-            "      npm install -g playwright-core @mozilla/readability jsdom turndown\n" +
-            "    or:\n" +
-            "      npm install playwright-core @mozilla/readability jsdom turndown\n"
+            "      npm install\n" +
+            "  - Then initialize or repair the controlled browser runtime:\n" +
+            "      clawfetch runtime install\n"
         );
         process.exit(1);
       }
@@ -648,10 +920,10 @@ function loadDeps() {
     console.error("ERROR: Missing required npm packages:\n  - " + missing.join("\n  - "));
     console.error(
       "\nNEXT:\n" +
-        "  - Install globally:\n" +
-        "      npm install -g playwright-core @mozilla/readability jsdom turndown\n" +
-        "    or locally:\n" +
-        "      npm install playwright-core @mozilla/readability jsdom turndown\n"
+        "  - Install clawfetch dependencies in the package directory:\n" +
+        "      npm install\n" +
+        "  - Then initialize the controlled browser runtime:\n" +
+        "      clawfetch runtime install\n"
     );
     process.exit(1);
   }
@@ -660,7 +932,13 @@ function loadDeps() {
 }
 
 function loadDepsNoAuto() {
-  const runtime = loadPlaywrightRuntime();
+  let runtime;
+  try {
+    runtime = loadPlaywrightRuntime();
+  } catch (e) {
+    printPlaywrightRuntimeError(e);
+    process.exit(1);
+  }
   const { Readability } = require("@mozilla/readability");
   const TurndownService = require("turndown");
   ({ JSDOM } = require("jsdom"));
@@ -1477,12 +1755,19 @@ async function main() {
     console.error(`ERROR: Scrape operation failed: ${error.message}`);
     if (looksLikeRuntimeLaunchError(error)) {
       const status = await collectRuntimeStatus();
-      console.error("INFO: The controlled Playwright runtime appears missing or unhealthy.");
+      console.error("INFO: The controlled Playwright runtime is missing, unhealthy, or outside the supported runtime boundary.");
       console.error(`DEBUG: RuntimeRoot: ${status.runtime.root}`);
       console.error(`DEBUG: ExpectedExecutable: ${status.browser.executablePath || "unknown"}`);
+      if (status.errors.length > 0) {
+        console.error("DEBUG: RuntimeErrors:");
+        for (const runtimeError of status.errors) {
+          console.error(`  - ${runtimeError}`);
+        }
+      }
       console.error(
         "NEXT:\n" +
-          "  - Initialize or repair the clawfetch runtime:\n" +
+          "  - Diagnose, initialize, or repair the clawfetch runtime:\n" +
+          "      clawfetch runtime diagnose --json\n" +
           "      clawfetch runtime install\n" +
           "      clawfetch runtime check\n"
       );

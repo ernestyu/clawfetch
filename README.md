@@ -76,7 +76,10 @@ clawfetch runtime check
 
 `clawfetch` keeps its Playwright browser binaries in a component-owned runtime
 directory instead of relying on whatever Playwright cache happens to exist on
-the host. By default this is:
+the host. It also supports exactly one Playwright JS runtime shape:
+`playwright-core`, installed under the clawfetch package's own `node_modules`
+directory and within the version range declared by clawfetch. By default the
+browser runtime is:
 
 - Windows: `%LOCALAPPDATA%\clawfetch\ms-playwright`
 - Linux/macOS: `$XDG_CACHE_HOME/clawfetch/ms-playwright` or `~/.cache/clawfetch/ms-playwright`
@@ -110,12 +113,14 @@ clawfetch runtime <status|install|check|repair|upgrade|clean|diagnose>
 
 Runtime lifecycle commands:
 
-- `clawfetch runtime status` shows the clawfetch version, Playwright package,
-  controlled browser path, manifest, and whether the expected Chromium binary exists.
+- `clawfetch runtime status` shows the clawfetch version, supported Playwright
+  package model, actual Playwright package source/version, controlled browser
+  path, manifest match, and whether the expected Chromium binary exists.
 - `clawfetch runtime install` installs the Chromium runtime for the current
-  bundled Playwright package.
+  supported `playwright-core` package.
 - `clawfetch runtime check` verifies that the controlled runtime can actually
-  launch Chromium.
+  launch Chromium after the JS package, package source, manifest, and browser
+  binary all match the supported runtime boundary.
 - `clawfetch runtime repair` reinstalls the current runtime when files are
   missing or damaged.
 - `clawfetch runtime upgrade` installs the browser runtime expected by the
@@ -204,15 +209,30 @@ or experiment with browser-based scraping on Reddit.
 
 `clawfetch` depends on the following npm packages:
 
-- `playwright-core` (or `playwright`)
+- `playwright-core`
 - `@mozilla/readability`
 - `jsdom`
 - `turndown`
 
 At runtime, `clawfetch`:
 
-- Prefers `playwright-core` when available; falls back to `playwright`.
+- Supports only `playwright-core` as the Playwright JS runtime.
+- Requires `playwright-core` to resolve from the clawfetch package's own
+  `node_modules` boundary, not from an ambient host project, another skill, or
+  another global install path.
+- Requires the resolved `playwright-core` version to satisfy clawfetch's
+  declared dependency range.
+- Requires the controlled Chromium runtime and runtime manifest to match the
+  current clawfetch component and resolved `playwright-core` package.
 - Checks for `@mozilla/readability`, `jsdom`, and `turndown` via `require()`.
+
+`playwright` is not treated as an interchangeable substitute for
+`playwright-core`. If the supported package is missing, has the wrong version,
+resolves from the wrong source, or does not match the controlled browser
+runtime, clawfetch exits with a runtime error instead of trying a fallback
+package. Use `clawfetch runtime install`, `repair`, `upgrade`, `clean`, and
+`diagnose --json` to bring the component-owned runtime back into a supported
+state.
 
 If dependencies are missing **and `--auto-install` is not used**:
 
@@ -220,16 +240,16 @@ If dependencies are missing **and `--auto-install` is not used**:
 
   ```text
   ERROR: Missing required npm packages:
-    - playwright-core (or playwright)
+    - playwright-core
     - @mozilla/readability
     - jsdom
     - turndown
 
   NEXT:
-    - Install globally:
-        npm install -g playwright-core @mozilla/readability jsdom turndown
-      or locally:
-        npm install playwright-core @mozilla/readability jsdom turndown
+    - Install clawfetch dependencies in the package directory:
+        npm install
+    - Then initialize the controlled browser runtime:
+        clawfetch runtime install
   ```
 
 - Then exits with a non-zero status.
