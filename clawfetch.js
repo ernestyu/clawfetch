@@ -40,6 +40,7 @@ const COMPONENT_ROOT = __dirname;
 const RUNTIME_ROOT = path.join(COMPONENT_ROOT, ".clawfetch-runtime");
 const BROWSERS_PATH = path.join(RUNTIME_ROOT, "ms-playwright");
 const RUNTIME_MANIFEST_PATH = path.join(RUNTIME_ROOT, "runtime.json");
+const CONFIG_FILE_NAME = "clawfetch.toml";
 const PREVIOUS_PLAYWRIGHT_BROWSERS_PATH = process.env.PLAYWRIGHT_BROWSERS_PATH || "";
 const IGNORED_CLAWFETCH_RUNTIME_DIR = process.env.CLAWFETCH_RUNTIME_DIR || "";
 const SUPPORTED_PLAYWRIGHT_PACKAGE = "playwright-core";
@@ -52,7 +53,8 @@ const COMPONENT_NODE_MODULES_DIR = path.join(COMPONENT_ROOT, "node_modules");
 // directory under the package root instead of relying on ambient host caches.
 process.env.PLAYWRIGHT_BROWSERS_PATH = BROWSERS_PATH;
 
-const FLARESOLVERR_URL = process.env.FLARESOLVERR_URL || '';
+const FLARESOLVERR_ENV_URL = process.env.FLARESOLVERR_URL || "";
+const DEFAULT_FLARESOLVERR_TIMEOUT_MS = 60000;
 
 function readJsonFile(filePath) {
   try {
@@ -65,6 +67,183 @@ function readJsonFile(filePath) {
 function writeJsonFile(filePath, data) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2) + "\n", "utf8");
+}
+
+function findConfigFile(startDir = process.cwd()) {
+  let dir = path.resolve(startDir);
+  while (true) {
+    const candidate = path.join(dir, CONFIG_FILE_NAME);
+    if (fs.existsSync(candidate)) return candidate;
+
+    const parent = path.dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+}
+
+function stripTomlComment(line) {
+  let inString = false;
+  let quote = "";
+  let escaped = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (inString && ch === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      if (!inString) {
+        inString = true;
+        quote = ch;
+      } else if (quote === ch) {
+        inString = false;
+        quote = "";
+      }
+      continue;
+    }
+    if (!inString && ch === "#") {
+      return line.slice(0, i);
+    }
+  }
+  return line;
+}
+
+function parseTomlValue(rawValue, keyName, filePath) {
+  const value = rawValue.trim();
+  if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+    return value.slice(1, -1);
+  }
+  if (value === "true") return true;
+  if (value === "false") return false;
+  if (/^-?\d+$/.test(value)) return Number(value);
+  throw new Error(`Unsupported TOML value for ${keyName} in ${filePath}: ${value}`);
+}
+
+function parseClawfetchToml(filePath) {
+  const config = {};
+  let section = "";
+  const lines = fs.readFileSync(filePath, "utf8").split(/\r?\n/);
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = stripTomlComment(lines[i]).trim();
+    if (!line) continue;
+
+    const sectionMatch = line.match(/^\[([A-Za-z0-9_.-]+)\]$/);
+    if (sectionMatch) {
+      section = sectionMatch[1];
+      if (!config[section]) config[section] = {};
+      continue;
+    }
+
+    const kvMatch = line.match(/^([A-Za-z0-9_-]+)\s*=\s*(.+)$/);
+    if (!kvMatch) {
+      throw new Error(`Unsupported TOML syntax in ${filePath}:${i + 1}`);
+    }
+    if (!section) {
+      throw new Error(`TOML key outside a section in ${filePath}:${i + 1}`);
+    }
+
+    const key = kvMatch[1];
+    config[section][key] = parseTomlValue(kvMatch[2], `${section}.${key}`, filePath);
+  }
+
+  return config;
+}
+
+function readClawfetchConfig() {
+  const configPath = findConfigFile();
+  if (!configPath) {
+    return {
+      path: null,
+      found: false,
+      data: {},
+      error: null,
+    };
+  }
+
+  try {
+    return {
+      path: configPath,
+      found: true,
+      data: parseClawfetchToml(configPath),
+      error: null,
+    };
+  } catch (e) {
+    return {
+      path: configPath,
+      found: true,
+      data: {},
+      error: e && e.message ? e.message : String(e),
+    };
+  }
+}
+
+function normalizeUrl(url) {
+  return String(url || "").replace(/\/$/, "");
+}
+
+function resolveFlareSolverrConfig({ cliUrl = "", cliTimeoutMs = null, forceEnable = false } = {}) {
+  const file = readClawfetchConfig();
+  const toml = file.data && file.data.flaresolverr ? file.data.flaresolverr : {};
+  const errors = [];
+
+  const tomlEnabled = typeof toml.enabled === "boolean" ? toml.enabled : false;
+  const tomlUrl = typeof toml.url === "string" ? toml.url.trim() : "";
+  const tomlTimeout = Number.isInteger(toml.max_timeout_ms) ? toml.max_timeout_ms : null;
+
+  if (file.error) {
+    errors.push(file.error);
+  }
+  if (toml.enabled !== undefined && typeof toml.enabled !== "boolean") {
+    errors.push(`${CONFIG_FILE_NAME} [flaresolverr].enabled must be a boolean.`);
+  }
+  if (toml.url !== undefined && typeof toml.url !== "string") {
+    errors.push(`${CONFIG_FILE_NAME} [flaresolverr].url must be a string.`);
+  }
+  if (toml.max_timeout_ms !== undefined && (!Number.isInteger(toml.max_timeout_ms) || toml.max_timeout_ms <= 0)) {
+    errors.push(`${CONFIG_FILE_NAME} [flaresolverr].max_timeout_ms must be a positive integer.`);
+  }
+  if (tomlEnabled && !tomlUrl && !cliUrl && !FLARESOLVERR_ENV_URL) {
+    errors.push(`${CONFIG_FILE_NAME} [flaresolverr].url is required when enabled = true.`);
+  }
+
+  const url = cliUrl || tomlUrl || FLARESOLVERR_ENV_URL || "";
+  const urlSource = cliUrl ? "cli" : tomlUrl ? "toml" : FLARESOLVERR_ENV_URL ? "env" : "default";
+  const timeoutMs =
+    cliTimeoutMs !== null
+      ? cliTimeoutMs
+      : tomlTimeout !== null
+        ? tomlTimeout
+        : DEFAULT_FLARESOLVERR_TIMEOUT_MS;
+  const timeoutSource = cliTimeoutMs !== null ? "cli" : tomlTimeout !== null ? "toml" : "default";
+  const enabled =
+    forceEnable ||
+    !!cliUrl ||
+    tomlEnabled ||
+    (!file.found && !!FLARESOLVERR_ENV_URL);
+
+  if (timeoutMs <= 0) {
+    errors.push("FlareSolverr timeout must be a positive integer.");
+  }
+  if (url && !/^https?:\/\//i.test(url)) {
+    errors.push("FlareSolverr URL must start with http:// or https://.");
+  }
+
+  return {
+    enabled,
+    url: normalizeUrl(url),
+    urlSource,
+    maxTimeoutMs: timeoutMs,
+    timeoutSource,
+    configPath: file.path,
+    configFound: file.found,
+    envUrlPresent: !!FLARESOLVERR_ENV_URL,
+    errors,
+  };
 }
 
 function isInsidePath(parentPath, childPath) {
@@ -333,6 +512,11 @@ async function collectRuntimeStatus({ verifyLaunch = false } = {}) {
       previousPlaywrightBrowsersPath: PREVIOUS_PLAYWRIGHT_BROWSERS_PATH || null,
       ignoredClawfetchRuntimeDir: IGNORED_CLAWFETCH_RUNTIME_DIR || null,
     },
+    config: {
+      clawfetchTomlPath: null,
+      clawfetchTomlFound: false,
+      flaresolverr: null,
+    },
     playwright: null,
     browser: {
       name: "chromium",
@@ -354,6 +538,19 @@ async function collectRuntimeStatus({ verifyLaunch = false } = {}) {
       launchError: null,
     },
     errors: [],
+  };
+
+  const flareConfig = resolveFlareSolverrConfig();
+  status.config.clawfetchTomlPath = flareConfig.configPath;
+  status.config.clawfetchTomlFound = flareConfig.configFound;
+  status.config.flaresolverr = {
+    enabled: flareConfig.enabled,
+    url: flareConfig.url || null,
+    urlSource: flareConfig.urlSource,
+    maxTimeoutMs: flareConfig.maxTimeoutMs,
+    timeoutSource: flareConfig.timeoutSource,
+    envUrlPresent: flareConfig.envUrlPresent,
+    errors: flareConfig.errors,
   };
 
   let pw;
@@ -460,6 +657,19 @@ function printRuntimeStatusText(status) {
   }
   if (status.runtime.manifest) {
     console.log(`ManifestUpdatedAt: ${status.runtime.manifest.updatedAt || "unknown"}`);
+  }
+  if (status.config && status.config.flaresolverr) {
+    const flare = status.config.flaresolverr;
+    console.log(`ConfigFile: ${status.config.clawfetchTomlPath || "not-found"}`);
+    console.log(`FlareSolverrEnabled: ${flare.enabled ? "yes" : "no"}`);
+    console.log(`FlareSolverrURL: ${flare.url || "not-configured"} (${flare.urlSource})`);
+    console.log(`FlareSolverrTimeoutMs: ${flare.maxTimeoutMs} (${flare.timeoutSource})`);
+    if (flare.errors && flare.errors.length > 0) {
+      console.log("ConfigErrors:");
+      for (const error of flare.errors) {
+        console.log(`  - ${error}`);
+      }
+    }
   }
 }
 
@@ -708,14 +918,36 @@ function printRuntimeHelp() {
   console.log("  CLAWFETCH_RUNTIME_DIR is ignored to keep the component runtime deterministic.");
 }
 
-async function fetchViaFlareSolverr(targetUrl) {
-  if (!FLARESOLVERR_URL) return null;
+function printFlareSolverrConfigErrors(config) {
+  if (config.errors && config.errors.length > 0) {
+    console.error("CONFIG:");
+    for (const error of config.errors) {
+      console.error(`  - ${error}`);
+    }
+  }
+}
+
+function printFlareSolverrMissingNext() {
+  console.error(
+    "NEXT:\n" +
+      `  - Add FlareSolverr configuration to ${CONFIG_FILE_NAME} in this project:\n` +
+      "      [flaresolverr]\n" +
+      "      enabled = true\n" +
+      "      url = \"http://127.0.0.1:8191\"\n" +
+      "      max_timeout_ms = 60000\n" +
+      "  - Or temporarily set FLARESOLVERR_URL for compatibility.\n" +
+      "  - Or open the URL in a full browser to pass the challenge manually.\n"
+  );
+}
+
+async function fetchViaFlareSolverr(targetUrl, config) {
+  if (!config || !config.url) return null;
   try {
-    const res = await fetch(FLARESOLVERR_URL.replace(/\/$/, '') + '/v1', {
+    const res = await fetch(config.url + '/v1', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cmd: 'request.get', url: targetUrl, maxTimeout: 60000 }),
-      signal: AbortSignal.timeout(65000),
+      body: JSON.stringify({ cmd: 'request.get', url: targetUrl, maxTimeout: config.maxTimeoutMs }),
+      signal: AbortSignal.timeout(config.maxTimeoutMs + 5000),
     });
     if (!res.ok) {
       console.error(`WARN: FlareSolverr HTTP ${res.status}`);
@@ -829,7 +1061,9 @@ function printHelp() {
   console.log("  --help            Show this help and exit");
   console.log("  --max-comments N  Limit number of Reddit comments (0 = no limit; default 50)");
   console.log("  --no-reddit-rss   Disable Reddit RSS fast-path and use browser scraping");
-  console.log("  --via-flaresolverr   Fetch HTML via FLARESOLVERR_URL and skip Playwright");
+  console.log("  --via-flaresolverr   Fetch HTML via FlareSolverr and skip Playwright");
+  console.log("  --flaresolverr-url URL   Override [flaresolverr].url from clawfetch.toml");
+  console.log("  --flaresolverr-timeout-ms N   Override [flaresolverr].max_timeout_ms");
   console.log("  --auto-install    If dependencies are missing, attempt a local 'npm install'\n");
 }
 
@@ -841,6 +1075,8 @@ if (argv.includes("--help") || argv.length === 0) {
 let url = null;
 const flags = new Set();
 let maxComments = 50; // default for Reddit RSS comments (0 = no limit)
+let cliFlareSolverrUrl = "";
+let cliFlareSolverrTimeoutMs = null;
 
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
@@ -857,6 +1093,25 @@ for (let i = 0; i < argv.length; i++) {
         maxComments = parsed;
       }
       i += 1; // skip value
+    }
+  } else if (a === "--flaresolverr-url") {
+    const v = argv[i + 1];
+    if (v && !v.startsWith("-")) {
+      cliFlareSolverrUrl = v;
+      i += 1;
+    } else {
+      console.error("ERROR: --flaresolverr-url requires a URL value.");
+      process.exit(2);
+    }
+  } else if (a === "--flaresolverr-timeout-ms") {
+    const v = argv[i + 1];
+    const parsed = parseInt(v || "", 10);
+    if (v && !v.startsWith("-") && Number.isInteger(parsed) && parsed > 0) {
+      cliFlareSolverrTimeoutMs = parsed;
+      i += 1;
+    } else {
+      console.error("ERROR: --flaresolverr-timeout-ms requires a positive integer value.");
+      process.exit(2);
     }
   } else {
     flags.add(a);
@@ -876,6 +1131,25 @@ if (!url || !/^https?:\/\//i.test(url)) {
 
 const disableRedditRss = flags.has("--no-reddit-rss");
 const autoInstallDeps = flags.has("--auto-install");
+const flareSolverrConfig = resolveFlareSolverrConfig({
+  cliUrl: cliFlareSolverrUrl,
+  cliTimeoutMs: cliFlareSolverrTimeoutMs,
+  forceEnable: flags.has("--via-flaresolverr"),
+});
+
+if (flags.has("--via-flaresolverr")) {
+  if (flareSolverrConfig.errors.length > 0) {
+    console.error("ERROR: Invalid FlareSolverr configuration.");
+    printFlareSolverrConfigErrors(flareSolverrConfig);
+    printFlareSolverrMissingNext();
+    process.exit(1);
+  }
+  if (!flareSolverrConfig.url) {
+    console.error("ERROR: FlareSolverr URL is not configured.");
+    printFlareSolverrMissingNext();
+    process.exit(1);
+  }
+}
 
 function printPlaywrightRuntimeError(error) {
   console.error(`ERROR: Unsupported clawfetch Playwright runtime: ${error.message}`);
@@ -889,18 +1163,20 @@ function printPlaywrightRuntimeError(error) {
   );
 }
 
-function loadDeps() {
+function loadDeps({ needBrowser = true } = {}) {
   const missing = [];
   let runtimeError = null;
 
-  let runtime;
-  try {
-    runtime = loadPlaywrightRuntime();
-  } catch (e) {
-    if (e && e.code === "CLAWFETCH_PLAYWRIGHT_MISSING") {
-      missing.push(SUPPORTED_PLAYWRIGHT_PACKAGE);
-    } else {
-      runtimeError = e;
+  let runtime = null;
+  if (needBrowser) {
+    try {
+      runtime = loadPlaywrightRuntime();
+    } catch (e) {
+      if (e && e.code === "CLAWFETCH_PLAYWRIGHT_MISSING") {
+        missing.push(SUPPORTED_PLAYWRIGHT_PACKAGE);
+      } else {
+        runtimeError = e;
+      }
     }
   }
 
@@ -949,7 +1225,7 @@ function loadDeps() {
         process.exit(1);
       }
 
-      return loadDepsNoAuto();
+      return loadDepsNoAuto({ needBrowser });
     }
 
     console.error("ERROR: Missing required npm packages:\n  - " + missing.join("\n  - "));
@@ -957,30 +1233,36 @@ function loadDeps() {
       "\nNEXT:\n" +
         "  - Install clawfetch dependencies in the package directory:\n" +
         "      npm install\n" +
-        "  - Then initialize the controlled browser runtime:\n" +
-        "      clawfetch runtime install\n"
+        (needBrowser
+          ? "  - Then initialize the controlled browser runtime:\n" +
+            "      clawfetch runtime install\n"
+          : "")
     );
     process.exit(1);
   }
 
-  return { chromium: runtime.chromium, Readability, TurndownService };
+  return { chromium: runtime ? runtime.chromium : null, Readability, TurndownService };
 }
 
-function loadDepsNoAuto() {
-  let runtime;
-  try {
-    runtime = loadPlaywrightRuntime();
-  } catch (e) {
-    printPlaywrightRuntimeError(e);
-    process.exit(1);
+function loadDepsNoAuto({ needBrowser = true } = {}) {
+  let runtime = null;
+  if (needBrowser) {
+    try {
+      runtime = loadPlaywrightRuntime();
+    } catch (e) {
+      printPlaywrightRuntimeError(e);
+      process.exit(1);
+    }
   }
   const { Readability } = require("@mozilla/readability");
   const TurndownService = require("turndown");
   ({ JSDOM } = require("jsdom"));
-  return { chromium: runtime.chromium, Readability, TurndownService };
+  return { chromium: runtime ? runtime.chromium : null, Readability, TurndownService };
 }
 
-const { chromium, Readability, TurndownService } = loadDeps();
+const { chromium, Readability, TurndownService } = loadDeps({
+  needBrowser: !flags.has("--via-flaresolverr"),
+});
 
 function nowIso() {
   return new Date().toISOString().replace(/[:.]/g, "-");
@@ -1485,11 +1767,28 @@ async function tryRedditRssFastPath(urlStr, TurndownSvc, maxCommentsOpt) {
 }
 
 
-async function runFlareSolverrMode(url) {
-  const flare = await fetchViaFlareSolverr(url);
+async function runFlareSolverrMode(url, config) {
+  if (config.errors.length > 0) {
+    console.error("ERROR: Invalid FlareSolverr configuration.");
+    printFlareSolverrConfigErrors(config);
+    printFlareSolverrMissingNext();
+    return 1;
+  }
+  if (!config.url) {
+    console.error("ERROR: FlareSolverr URL is not configured.");
+    printFlareSolverrMissingNext();
+    return 1;
+  }
+
+  const flare = await fetchViaFlareSolverr(url, config);
   if (!flare || !flare.html || !flare.html.trim()) {
     console.error('ERROR: FlareSolverr did not return usable HTML.');
-    console.error('NEXT: Check FLARESOLVERR_URL and reachability; then open the URL in a full browser to verify Cloudflare/JS challenges.');
+    console.error(
+      "NEXT:\n" +
+        `  - Check the FlareSolverr service configured by ${config.urlSource} (${config.url}).\n` +
+        `  - Prefer project configuration in ${CONFIG_FILE_NAME}; FLARESOLVERR_URL remains a temporary compatibility override.\n` +
+        "  - Open the URL in a full browser to verify Cloudflare/JS challenges.\n"
+    );
     return 1;
   }
   const finalUrl = flare.finalUrl || url;
@@ -1547,7 +1846,7 @@ function looksLikeRuntimeLaunchError(error) {
 
 async function main() {
   if (flags.has("--via-flaresolverr")) {
-    return await runFlareSolverrMode(url);
+    return await runFlareSolverrMode(url, flareSolverrConfig);
   }
 
   // Fast path: GitHub README (default)
@@ -1814,10 +2113,14 @@ async function main() {
     } catch (_) {}
     if (pageHtml && looksLikeBotBlock(pageHtml)) {
       console.error('INFO: Detected possible bot-block / Cloudflare challenge page.');
-      if (!FLARESOLVERR_URL) {
-        console.error('NEXT: Configure FLARESOLVERR_URL to point to a FlareSolverr service, or open the URL in a full browser to pass the challenge manually.');
+      if (flareSolverrConfig.errors.length > 0) {
+        console.error("INFO: FlareSolverr configuration is present but invalid.");
+        printFlareSolverrConfigErrors(flareSolverrConfig);
+        printFlareSolverrMissingNext();
+      } else if (!flareSolverrConfig.enabled || !flareSolverrConfig.url) {
+        printFlareSolverrMissingNext();
       } else {
-        const flare = await fetchViaFlareSolverr(url);
+        const flare = await fetchViaFlareSolverr(url, flareSolverrConfig);
         if (flare && flare.html && flare.html.trim().length > 0) {
           console.error('INFO: Retrying extraction using FlareSolverr HTML.');
           try {

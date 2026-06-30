@@ -110,6 +110,9 @@ clawfetch runtime <status|install|check|repair|upgrade|clean|diagnose>
 - `--help`            – show help and exit
 - `--max-comments N`  – limit number of Reddit comments (0 = no limit; default 50)
 - `--no-reddit-rss`   – disable Reddit RSS fast-path and use browser scraping instead
+- `--via-flaresolverr` – force FlareSolverr mode for this URL
+- `--flaresolverr-url URL` – override `[flaresolverr].url` for one run
+- `--flaresolverr-timeout-ms N` – override `[flaresolverr].max_timeout_ms`
 - `--auto-install`    – when dependencies are missing, attempt a local `npm install` in the clawfetch directory
 
 > NOTE: By default, `clawfetch` **does not** install dependencies automatically.
@@ -146,9 +149,74 @@ In an OpenClaw setting, a typical pattern is:
 
 ---
 
-## 4. Site-specific behaviour
+## 4. Configuration
 
-### 4.1 General web pages
+`clawfetch` supports a project-local configuration file named `clawfetch.toml`.
+It is mainly used for FlareSolverr configuration so Agents can discover the
+scraping strategy from project files instead of relying on shell/session state.
+
+Example:
+
+```toml
+[flaresolverr]
+enabled = true
+url = "http://127.0.0.1:8191"
+max_timeout_ms = 60000
+```
+
+Lookup rule:
+
+- Starting from the current working directory, `clawfetch` searches upward for
+  the first `clawfetch.toml`.
+- If no file is found, project configuration is considered absent.
+- Missing FlareSolverr fields use defaults unless `enabled = true` requires a
+  usable URL.
+
+Precedence:
+
+1. CLI arguments: `--flaresolverr-url`, `--flaresolverr-timeout-ms`
+2. `clawfetch.toml`
+3. `FLARESOLVERR_URL` as a compatibility fallback
+4. Default disabled FlareSolverr behavior
+
+`FLARESOLVERR_URL` is still supported for older workflows and temporary
+overrides, but new projects should prefer `clawfetch.toml`.
+
+---
+
+## 5. Cloudflare / Bot Challenge Support
+
+For sites with Cloudflare or similar bot challenges, `clawfetch` can use a
+FlareSolverr-compatible service.
+
+Explicit mode:
+
+```bash
+clawfetch --via-flaresolverr https://example.com/protected-page
+```
+
+Automatic fallback:
+
+- During normal browser scraping, if `clawfetch` detects a bot-block page and
+  `[flaresolverr].enabled = true` with a valid URL, it retries extraction with
+  FlareSolverr HTML.
+- If FlareSolverr is not configured, the error points to `clawfetch.toml` first
+  and mentions `FLARESOLVERR_URL` only as a temporary compatibility option.
+
+Use Docker service names when appropriate, for example:
+
+```toml
+[flaresolverr]
+enabled = true
+url = "http://flaresolverr:8191"
+max_timeout_ms = 60000
+```
+
+---
+
+## 6. Site-specific behaviour
+
+### 6.1 General web pages
 
 For normal sites (news, blogs, docs pages), `clawfetch`:
 
@@ -164,7 +232,7 @@ If the extracted content is too short or obviously unreliable, `clawfetch`
 logs warnings, debug info (including optional screenshots), and suggests next
 steps.
 
-### 4.2 GitHub repositories
+### 6.2 GitHub repositories
 
 For URLs like `https://github.com/owner/repo`, `clawfetch` treats them as
 **documentation entry points**:
@@ -192,7 +260,7 @@ NOTE:
 This keeps `clawfetch` focused on documentation, while leaving code navigation
 to git-based tools.
 
-### 4.3 Reddit
+### 6.3 Reddit
 
 For `reddit.com` / `www.reddit.com` / `old.reddit.com` URLs, `clawfetch`:
 
@@ -212,7 +280,7 @@ or experiment with browser-based scraping on Reddit.
 
 ---
 
-## 5. Dependencies & auto-install
+## 7. Dependencies & auto-install
 
 `clawfetch` depends on the following npm packages:
 
@@ -273,7 +341,7 @@ allowing a one-shot bootstrap when explicitly requested.
 
 ---
 
-## 6. Agent-friendly error hints
+## 8. Agent-friendly error hints
 
 Because `clawfetch` is designed to be used by agents (especially OpenClaw
 skills running inside Docker images like `ernestyu/openclaw-patched`), error
@@ -287,6 +355,6 @@ seeing a raw exit code.
 
 ---
 
-## 7. License
+## 9. License
 
 This project is licensed under the Apache License 2.0. See `LICENSE` for details.

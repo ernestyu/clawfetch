@@ -1,0 +1,9 @@
+# Project-local clawfetch configuration.
+# The CLI searches for this file from the current working directory upward.
+
+[flaresolverr]
+# Keep disabled by default. Set enabled = true and update url when using
+# FlareSolverr for Cloudflare / bot challenge pages.
+enabled = false
+# url = "http://127.0.0.1:8191"
+max_timeout_ms = 60000

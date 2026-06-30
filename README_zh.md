@@ -13,7 +13,7 @@
 - Playwright（无头 Chromium）
 - Mozilla Readability（正文抽取）
 - Turndown（HTML → markdown）
-- 可选：FlareSolverr（Cloudflare / bot 挑战页面的 JS 抓取后端，通过 FLARESOLVERR_URL 调用）
+- 可选：FlareSolverr（Cloudflare / bot 挑战页面的 JS 抓取后端，优先通过 `clawfetch.toml` 配置）
 
 输入：单个 `http/https` URL
 输出：标准化的 markdown（写到 stdout），前面带一段简单的元数据头部：
@@ -88,6 +88,9 @@ clawfetch runtime <status|install|check|repair|upgrade|clean|diagnose>
 - `--help`            显示帮助后退出
 - `--max-comments N`  限制 Reddit 评论数量（0 = 不限制；默认 50）
 - `--no-reddit-rss`   对 Reddit URL 禁用 RSS 快速路径，强制用浏览器抓取
+- `--via-flaresolverr` 强制本次 URL 通过 FlareSolverr 抓取
+- `--flaresolverr-url URL` 覆盖 `clawfetch.toml` 中的 `[flaresolverr].url`
+- `--flaresolverr-timeout-ms N` 覆盖 `[flaresolverr].max_timeout_ms`
 - `--auto-install`    当缺少 npm 依赖时，尝试在 clawfetch 安装目录执行一次本地 `npm install`
 
 > 注意：默认情况下，`clawfetch` **不会自动安装依赖**，只会打印清晰的
@@ -117,35 +120,64 @@ clawfetch runtime <status|install|check|repair|upgrade|clean|diagnose>
 
 ---
 
+## 配置文件
+
+`clawfetch` 支持项目内显式配置文件 `clawfetch.toml`。它主要用于配置
+FlareSolverr，让人和 Agent 能直接从项目文件中理解抓取策略，而不是依赖
+外部 shell/session 状态。
+
+示例：
+
+```toml
+[flaresolverr]
+enabled = true
+url = "http://127.0.0.1:8191"
+max_timeout_ms = 60000
+```
+
+查找规则：
+
+- 从当前工作目录开始，向上查找第一个 `clawfetch.toml`；
+- 如果找不到，则视为没有项目配置；
+- FlareSolverr 字段缺失时使用默认值，但 `enabled = true` 时必须有可用 URL。
+
+优先级：
+
+1. CLI 参数：`--flaresolverr-url`、`--flaresolverr-timeout-ms`
+2. `clawfetch.toml`
+3. `FLARESOLVERR_URL` 兼容旧流程和临时覆盖
+4. 默认不启用 FlareSolverr
+
+`FLARESOLVERR_URL` 仍然兼容，但新项目应优先使用 `clawfetch.toml`。
+
+---
+
 ## Cloudflare / bot 挑战站点支持
 
 对于带有 Cloudflare 或类似 bot 挑战的站点（例如 Kaggle 部分页面），
-clawfetch 提供了额外的 JS 抓取后端支持：
+clawfetch 可以调用兼容 FlareSolverr API 的服务。
 
-- 当环境变量 `FLARESOLVERR_URL` 配置为一个兼容 FlareSolverr API 的服务时，
-  clawfetch 可以在检测到 bot-block 页面时自动调用该服务获取最终 HTML；
-- 也可以显式使用 `--via-flaresolverr` 参数，强制通过该后端抓取页面：
+显式模式：
 
 ```bash
-FLARESOLVERR_URL=http://127.0.0.1:8191 \n  clawfetch --via-flaresolverr 'https://www.kaggle.com/.../some-article'
+clawfetch --via-flaresolverr 'https://www.kaggle.com/.../some-article'
 ```
 
-错误信息中的提示：
+自动 fallback：
 
-- 如果 clawfetch 在浏览器模式下检测到 Cloudflare / bot 挑战页，且当前未配置
-  `FLARESOLVERR_URL`，会输出类似：
+- 普通浏览器抓取检测到 bot-block 页面时，如果 `[flaresolverr].enabled = true`
+  且 URL 有效，会自动尝试用 FlareSolverr 返回的 HTML 重新抽取；
+- 如果没有配置 FlareSolverr，错误提示会优先引导配置 `clawfetch.toml`，
+  `FLARESOLVERR_URL` 只作为临时兼容选项出现。
 
-  ```text
-  INFO: Detected possible bot-block / Cloudflare challenge page.
-  NEXT: Configure FLARESOLVERR_URL to point to a FlareSolverr service, or open the URL in a full browser to pass the challenge manually.
-  ```
+Docker 场景中可以使用服务名：
 
-- 这条 `NEXT:` 提示说明你可以：
-  - 搭建或指向一个 FlareSolverr 服务（或其它实现了同样 API 的 JS 抓取后端）；
-  - 或者直接在本地浏览器里打开 URL，通过挑战后手动复制内容。
-
-在普通站点（无 Cloudflare / bot 挑战）上，clawfetch 仍然只使用 Playwright（或
-fast-path，如 GitHub / Reddit），不依赖 FlareSolverr。
+```toml
+[flaresolverr]
+enabled = true
+url = "http://flaresolverr:8191"
+max_timeout_ms = 60000
+```
 
 ## 站点行为说明
 
