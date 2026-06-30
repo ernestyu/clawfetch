@@ -1,7 +1,7 @@
 ---
 name: clawfetch
 description: Thin OpenClaw and ClawHub wrapper for the published clawfetch npm CLI, used to fetch web pages, GitHub READMEs, and Reddit threads as markdown.
-version: 1.0.11
+version: 1.0.12
 metadata:
   openclaw:
     requires:

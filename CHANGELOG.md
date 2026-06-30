@@ -2,6 +2,15 @@
 
 All notable changes to this project should be documented in this file.
 
+## v1.0.12 - 2026-06-30
+
+### Fixed
+- Fixed FlareSolverr TOML config resolution where `[flaresolverr].url` could be reduced to boolean `true` instead of preserving the configured string URL.
+- Restored correct parsing and selection of TOML-provided FlareSolverr URLs when `enabled = true`.
+
+### Changed
+- Aligned the project version, skill wrapper version, and bootstrap fallback version to `1.0.12`.
+
 ## v1.0.11 - 2026-06-30
 
 ### Added

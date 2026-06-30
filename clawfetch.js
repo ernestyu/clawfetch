@@ -225,9 +225,21 @@ function resolveFlareSolverrConfig({ cliUrl = "", cliTimeoutMs = null, forceEnab
     errors.push(`${CONFIG_FILE_NAME} [flaresolverr].url is required when enabled = true.`);
   }
 
-  const tomlUrlEnabled = tomlUrl && (tomlEnabled || forceEnable);
-  const url = cliUrl || tomlUrlEnabled || FLARESOLVERR_ENV_URL || tomlUrl || "";
-  const urlSource = cliUrl ? "cli" : tomlUrlEnabled ? "toml" : FLARESOLVERR_ENV_URL ? "env" : tomlUrl ? "toml" : "default";
+  let url = "";
+  let urlSource = "default";
+  if (cliUrl) {
+    url = cliUrl;
+    urlSource = "cli";
+  } else if ((tomlEnabled || forceEnable) && tomlUrl) {
+    url = tomlUrl;
+    urlSource = "toml";
+  } else if (FLARESOLVERR_ENV_URL) {
+    url = FLARESOLVERR_ENV_URL;
+    urlSource = "env";
+  } else if (tomlUrl) {
+    url = tomlUrl;
+    urlSource = "toml";
+  }
   const timeoutMs =
     cliTimeoutMs !== null
       ? cliTimeoutMs
