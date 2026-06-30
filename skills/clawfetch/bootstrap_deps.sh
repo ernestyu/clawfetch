@@ -14,9 +14,10 @@ else
 fi
 
 cd "$SCRIPT_DIR"
-npm install --no-save "clawfetch@$CLAWFETCH_VERSION"
+npm install --no-save --install-strategy=shallow "clawfetch@$CLAWFETCH_VERSION"
 
-CLAWFETCH_CLI="$SCRIPT_DIR/node_modules/clawfetch/clawfetch.js"
+CLAWFETCH_ROOT="$SCRIPT_DIR/node_modules/clawfetch"
+CLAWFETCH_CLI="$CLAWFETCH_ROOT/clawfetch.js"
 if [ ! -f "$CLAWFETCH_CLI" ]; then
   cat >&2 <<EOF
 ERROR: clawfetch npm package installed, but the expected CLI entry was not found:
@@ -30,10 +31,30 @@ EOF
   exit 1
 fi
 
+cd "$CLAWFETCH_ROOT"
+npm install --no-save
+
+CLAWFETCH_PLAYWRIGHT_PACKAGE="$CLAWFETCH_ROOT/node_modules/playwright-core/package.json"
+if [ ! -f "$CLAWFETCH_PLAYWRIGHT_PACKAGE" ]; then
+  cat >&2 <<EOF
+ERROR: clawfetch CLI was installed, but its component-local Playwright dependency was not found:
+  $CLAWFETCH_PLAYWRIGHT_PACKAGE
+
+NEXT:
+  - Verify clawfetch package dependencies were published correctly.
+  - Re-run bootstrap after the package is repaired or the wrapper install flow is updated.
+
+EOF
+  exit 1
+fi
+
 cat <<EOF
 
 clawfetch npm CLI installed in:
-  $SCRIPT_DIR/node_modules/clawfetch
+  $CLAWFETCH_ROOT
+
+Component-local dependencies initialized in:
+  $CLAWFETCH_ROOT/node_modules
 
 NEXT:
   - Install the CLI-managed browser runtime:
